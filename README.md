@@ -1,0 +1,240 @@
+# filament-prism
+
+Registre de services IA (basés sur [`prism-php/prism`](https://prismphp.com))
+pour Filament, avec persistance durable de chaque appel et suivi des tokens.
+
+Le premier service livré est la **correction orthographique et grammaticale**
+(tâche `orthography`) : d'autres tâches (traduction, reformulation, ...)
+s'ajoutent sans toucher au cœur du package.
+
+## Sommaire
+
+- [Installation](#installation)
+- [Concepts](#concepts)
+  - [AiInteraction — la durabilité](#aiinteraction--la-durabilité)
+  - [AiTask / AiTaskRegistry — le registre de tâches](#aitask--aitaskregistry--le-registre-de-tâches)
+  - [CorrectionSubject — quoi corriger](#correctionsubject--quoi-corriger)
+  - [CorrectionService — appeler l'IA et appliquer le résultat](#correctionservice--appeler-lia-et-appliquer-le-résultat)
+  - [AiResultRenderer — comment afficher le résultat](#airesultrenderer--comment-afficher-le-résultat)
+- [Utilisation : un modèle Eloquent (`Correctable`)](#utilisation--un-modèle-eloquent-correctable)
+- [Utilisation : un texte hors modèle (`FieldsCorrectionSubject`)](#utilisation--un-texte-hors-modèle-fieldscorrectionsubject)
+- [Widgets de consommation](#widgets-de-consommation)
+- [Roadmap (hors périmètre v1)](#roadmap-hors-périmètre-v1)
+
+## Installation
+
+Path-repository, comme les autres plugins `charlesstolive/filament-*` de ce
+projet (voir `desapp/composer.json`, section `repositories`) :
+
+```json
+{
+    "repositories": [
+        {"type": "path", "url": "../packages_filament/filament-prism"}
+    ],
+    "require": {
+        "charlesstolive/filament-prism": "dev-master",
+        "prism-php/prism": "^0.99"
+    }
+}
+```
+
+```bash
+sail composer update charlesstolive/filament-prism prism-php/prism
+sail artisan vendor:publish --tag=filament-prism-migrations
+sail artisan migrate
+```
+
+Le provider/modèle par défaut se règlent dans `config/filament-prism.php`
+(publié automatiquement) ou par les variables d'environnement
+`FILAMENT_PRISM_PROVIDER`/`FILAMENT_PRISM_MODEL` (à défaut, `AI_PROVIDER`/
+`AI_MODEL`) — la clé API elle-même se configure côté `prism-php/prism`, dans
+`config/prism.php` de l'application.
+
+## Concepts
+
+### `AiInteraction` — la durabilité
+
+Chaque appel IA est persisté **dès sa réponse**, jamais tenu seulement en
+état Livewire : une coupure de session entre l'appel et le clic sur
+« Appliquer » ne perd ni le travail, ni le budget de tokens déjà dépensé.
+Rouvrir l'action retrouve l'interaction `pending` existante au lieu de
+rappeler l'IA (voir `CorrectionService::correct()`).
+
+Colonnes notables :
+
+| Colonne | Rôle |
+|---|---|
+| `correctable_type`/`correctable_id` | Le modèle auquel l'interaction se rattache pour durer (`CorrectionSubject::model()`) — pas forcément le modèle qui porte le texte corrigé, voir plus bas. |
+| `subject_key` | Distingue plusieurs sujets rattachés au même modèle (ex. plusieurs périodes d'un même voyage). `null` quand le modèle seul suffit à identifier le sujet. |
+| `trackable_type`/`trackable_id` | Le périmètre d'agrégation pour les widgets de tokens (ex. le voyage entier), indépendant du modèle d'attache. |
+| `input`/`output` | Les valeurs envoyées, et la réponse structurée de l'IA (déjà décodée par Prism, pas de regex). |
+| `status` | `pending` → `applied`/`discarded`. Rien n'est supprimé au clic « ignorer » : l'historique reste consultable. |
+| `thread_id`/`parent_interaction_id` | Posées maintenant, inutilisées en v1 (chaque interaction est un fil à elle seule) : Prism sait déjà rejouer un historique de messages (`withMessages()`), elles éviteront un `ALTER TABLE` le jour où un vrai dialogue multi-tours existera. |
+| `meta` (json) | Réservée aux futurs `AiResultRenderer` qui en ont besoin (ex. un `ChoiceRenderer` y noterait l'option choisie) ; `TextDiffRenderer` ne l'utilise pas. |
+
+### `AiTask` / `AiTaskRegistry` — le registre de tâches
+
+Une tâche = une classe qui implémente `AiTask` (clé, prompt système,
+provider/modèle par défaut, classe de renderer), listée dans
+`config('filament-prism.tasks')`. `OrthographyTask` est la seule fournie ;
+en ajouter une nouvelle ne touche pas au cœur du package :
+
+```php
+// config/filament-prism.php
+'tasks' => [
+    \CharlesStOlive\FilamentPrism\Tasks\OrthographyTask::class,
+    \App\Ai\Tasks\TranslationTask::class, // exemple
+],
+```
+
+### `CorrectionSubject` — quoi corriger
+
+`CorrectionService::correct()` ne connaît que ce contrat — 4 méthodes :
+
+```php
+interface CorrectionSubject
+{
+    public function model(): Model;      // l'AiInteraction s'y rattache, pour durer
+    public function key(): ?string;      // distingue plusieurs sujets d'un même modèle ; null si le modèle seul suffit
+    public function fields(): array;     // CorrectableField[]
+    public function extractValues(): array; // les valeurs actuelles à envoyer à l'IA
+}
+```
+
+Deux implémentations livrées :
+
+- **`Correctable`** (trait) — pour un texte qui vit dans les colonnes d'un
+  modèle Eloquent. `model()` renvoie `$this`, `key()` reste `null` (le
+  modèle seul identifie le sujet).
+- **`FieldsCorrectionSubject`** — pour un texte qui vit ailleurs (un
+  tableau d'état Livewire, par exemple). L'interaction se rattache tout de
+  même à un modèle stable, mais la lecture des valeurs passe par une closure
+  explicite, et `key()` devient obligatoire pour distinguer plusieurs sujets
+  du même modèle.
+
+`CorrectionSubject` ne sait dire que **quoi envoyer à l'IA**. Écrire le
+résultat est une préoccupation séparée (voir `CorrectionService::apply()` et
+`autoApply()` plus bas) — les deux cas n'écrivent pas de la même façon.
+
+### `CorrectionService` — appeler l'IA et appliquer le résultat
+
+```php
+$interaction = app(CorrectionService::class)->correct($subject, taskKey: 'orthography', trackable: $voyage);
+
+// Seulement valable quand $subject est un modèle Correctable (voir plus bas) :
+app(CorrectionService::class)->apply($interaction, onlyFields: ['title']); // écrit + save()
+app(CorrectionService::class)->discard($interaction);                     // status = discarded, rien n'est effacé
+```
+
+### `AiResultRenderer` — comment afficher le résultat
+
+Chaque `AiTask` déclare son `rendererClass()`. `OrthographyTask` utilise
+`TextDiffRenderer` : un diff mot-à-mot par champ (`WordDiff`, pur PHP, sans
+lib JS), texte retiré barré, texte ajouté souligné. Un futur `ChoiceRenderer`
+(réponse = un choix parmi plusieurs options, affiché en boutons plutôt qu'en
+diff) suivrait le même contrat sans toucher au reste du package.
+
+## Utilisation : un modèle Eloquent (`Correctable`)
+
+Le cas le plus courant : le texte corrigé vit dans les colonnes du modèle,
+qui doit déclarer `implements CorrectionSubject` **en plus** de
+`use Correctable;` — un trait ne peut pas déclarer d'interface à la place de
+la classe qui le pose (même principe que `HasMedia`/`InteractsWithMedia` de
+Spatie) :
+
+```php
+use CharlesStOlive\FilamentPrism\Concerns\Correctable;
+use CharlesStOlive\FilamentPrism\Support\CorrectableField;
+use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
+
+class OrchestratorContent extends Model implements CorrectionSubject, HasMedia, Orchestratable
+{
+    use Correctable;
+
+    public static function correctableFields(): array
+    {
+        return [
+            CorrectableField::make('title'),
+            CorrectableField::make('body')->html(),
+        ];
+    }
+}
+```
+
+Puis, dans une page Filament :
+
+```php
+use CharlesStOlive\FilamentPrism\Filament\Actions\CorrectionAction;
+
+// En popup :
+CorrectionAction::make()->correctable(fn () => $this->content)
+
+// En volet, si la page utilise HasSidePane (filament-orchestrator) :
+CorrectionSidePane::make('orthography', $this->content)
+```
+
+« Appliquer » écrit directement dans le modèle et le sauvegarde
+(`CorrectionService::apply()`) — `autoApply` reste à `true` (son défaut).
+
+## Utilisation : un texte hors modèle (`FieldsCorrectionSubject`)
+
+Cas réel dans `desapp` : une période du carnet de voyage ne s'édite pas comme
+un modèle Eloquent — son titre et son texte vivent dans
+`EditVoyage::$dayData`, un tableau d'état Livewire (voir la docblock de
+`EditVoyage::correctionAction()`). Le modèle Eloquent le plus proche et
+stable est le voyage lui-même (`Orchestration`), pas le contenu affiché
+(`OrchestratorContent`, une **copie dérivée** régénérée à chaque
+sauvegarde — la corriger directement ne tiendrait pas).
+
+```php
+use CharlesStOlive\FilamentPrism\Filament\Actions\CorrectionAction;
+use CharlesStOlive\FilamentPrism\Support\CorrectableField;
+use CharlesStOlive\FilamentPrism\Support\FieldsCorrectionSubject;
+
+CorrectionAction::make()
+    ->visible(fn (): bool => filled($this->dayData['node_key'] ?? null))
+    ->autoApply(false) // rien ne sait écrire tout seul dans $dayData
+    ->trackable(fn (): Model => $this->record)
+    ->correctable(fn (): FieldsCorrectionSubject => FieldsCorrectionSubject::make(
+        model: $this->record,
+        key: 'day:'.$this->dayData['node_key'], // distingue cette période des autres du même voyage
+        fields: [CorrectableField::make('title'), CorrectableField::make('body')->html()],
+        get: fn (): array => Arr::only($this->dayData, ['title', 'body']),
+    ));
+```
+
+Avec `autoApply(false)`, « Appliquer » ne fait que marquer l'interaction
+`applied` et envoyer les valeurs choisies via l'événement Livewire
+`filament-prism:correction-applied` — à charge de la page qui a ouvert
+l'action de les écrire (et de décider si/quand les persister) :
+
+```php
+#[On('filament-prism:correction-applied')]
+public function onCorrectionApplied(int $interactionId, array $values): void
+{
+    $this->dayData = [...$this->dayData, ...$values]; // un brouillon, comme une frappe au clavier —
+    // toujours à enregistrer via le bouton existant de la page, pas déjà en base.
+}
+```
+
+## Widgets de consommation
+
+- `AiTokenUsageOverview` — tokens de l'utilisateur courant, aujourd'hui / ce
+  mois (`StatsOverviewWidget`).
+- `AiTokenUsageByTrackable` — historique des interactions d'un `trackable`
+  donné (`AiTokenUsageByTrackable::make(['trackable' => $voyage])`), pour un
+  futur « tokens de ce voyage » sur sa propre page.
+
+## Roadmap (hors périmètre v1)
+
+- `ChoiceRenderer` : une réponse IA à choix multiples, affichée en boutons
+  plutôt qu'en diff (le contrat `AiResultRenderer` + la colonne `meta` sont
+  déjà en place pour ça).
+- D'autres tâches que `orthography` (traduction, reformulation...).
+- Un vrai dialogue multi-tours (`thread_id`/`parent_interaction_id` déjà en
+  place, inutilisés).
+- Correction d'un voyage/présentation complet en un seul appel (plusieurs
+  sujets à la fois) — le socle le permet, mais seule la période seule est
+  câblée pour l'instant.
+- Tests Pest côté package lui-même (aujourd'hui couvert côté application,
+  `desapp/tests/Feature/VoyageCorrectionTest.php`, avec `Prism::fake()`).
