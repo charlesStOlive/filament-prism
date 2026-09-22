@@ -20,6 +20,11 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * `meta` (json, nullable) est réservée aux renderers qui en ont besoin (ex.
  * un futur `ChoiceRenderer` y note l'option choisie) ; le `TextDiffRenderer`
  * v1 ne l'utilise pas.
+ *
+ * `subject_key` distingue plusieurs `CorrectionSubject` qui se rattacheraient
+ * au même modèle (ex. plusieurs périodes d'un même voyage, voir
+ * `FieldsCorrectionSubject`) — `null` quand le modèle seul identifie déjà le
+ * sujet (le cas `Correctable` le plus courant).
  */
 class AiInteraction extends Model
 {
@@ -30,6 +35,7 @@ class AiInteraction extends Model
         'model',
         'correctable_type',
         'correctable_id',
+        'subject_key',
         'trackable_type',
         'trackable_id',
         'input',

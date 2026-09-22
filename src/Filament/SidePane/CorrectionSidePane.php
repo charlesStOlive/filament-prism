@@ -3,8 +3,8 @@
 namespace CharlesStOlive\FilamentPrism\Filament\SidePane;
 
 use CharlesStOlive\FilamentOrchestrator\Filament\Split\SidePane;
-use CharlesStOlive\FilamentPrism\Concerns\Correctable;
 use CharlesStOlive\FilamentPrism\Livewire\CorrectionReview;
+use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -20,15 +20,16 @@ class CorrectionSidePane
 {
     public static function make(
         string $name,
-        Model&Correctable $correctable,
+        CorrectionSubject $subject,
         string $taskKey = 'orthography',
         ?Model $trackable = null,
+        bool $autoApply = true,
     ): SidePane {
         return SidePane::make($name)
             ->label('Orthographe')
             ->icon('heroicon-o-sparkles')
             ->schema([
-                CorrectionReview::forCorrectable($correctable, $taskKey, $trackable),
+                CorrectionReview::forSubject($subject, $taskKey, $trackable, $autoApply),
             ]);
     }
 }

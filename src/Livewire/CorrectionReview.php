@@ -2,10 +2,10 @@
 
 namespace CharlesStOlive\FilamentPrism\Livewire;
 
-use CharlesStOlive\FilamentPrism\Concerns\Correctable;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Services\CorrectionService;
+use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Livewire as LivewireComponent;
 use Illuminate\Contracts\View\View;
@@ -17,10 +17,22 @@ use Livewire\Component;
  * (`CorrectionSidePane`) : piloté par l'id d'une `AiInteraction`, jamais par
  * des tableaux avant/après passés en props — la réponse IA a déjà été
  * persistée avant que ce composant existe.
+ *
+ * `$autoApply` (sérialisable, contrairement à un `CorrectionSubject` qui peut
+ * porter des closures) décide comment « Appliquer » écrit le résultat :
+ * - `true` (par défaut) : le sujet est lui-même le modèle à corriger
+ *   (`Correctable`) — `CorrectionService::apply()` y écrit et le sauvegarde.
+ * - `false` : le sujet ne sait pas où vivent ses valeurs (`FieldsCorrectionSubject`,
+ *   ex. un tableau d'état Livewire) — ce composant se contente de marquer
+ *   l'interaction `applied` et d'envoyer les valeurs choisies à qui l'a ouvert,
+ *   via l'événement `filament-prism:correction-applied`, à charge pour lui de
+ *   les écrire (et de les persister, ou non) comme il l'entend.
  */
 class CorrectionReview extends Component
 {
     public int $interactionId;
+
+    public bool $autoApply = true;
 
     /** @var array<string, bool> */
     public array $applyFields = [];
@@ -29,17 +41,20 @@ class CorrectionReview extends Component
      * Déclenche (ou réutilise) la correction, puis pose ce composant tel
      * qu'on le glisse dans un schéma Filament (modale ou volet).
      */
-    public static function forCorrectable(Model&Correctable $correctable, string $taskKey = 'orthography', ?Model $trackable = null): LivewireComponent
+    public static function forSubject(CorrectionSubject $subject, string $taskKey = 'orthography', ?Model $trackable = null, bool $autoApply = true): LivewireComponent
     {
-        $interaction = app(CorrectionService::class)->correct($correctable, $taskKey, $trackable);
+        $interaction = app(CorrectionService::class)->correct($subject, $taskKey, $trackable);
 
-        return LivewireComponent::make(static::class, ['interactionId' => $interaction->getKey()])
-            ->key('filament-prism-correction-'.$interaction->getKey());
+        return LivewireComponent::make(static::class, [
+            'interactionId' => $interaction->getKey(),
+            'autoApply' => $autoApply,
+        ])->key('filament-prism-correction-'.$interaction->getKey());
     }
 
-    public function mount(int $interactionId): void
+    public function mount(int $interactionId, bool $autoApply = true): void
     {
         $this->interactionId = $interactionId;
+        $this->autoApply = $autoApply;
 
         $this->applyFields = collect($this->interaction()->output ?? [])
             ->keys()
@@ -54,9 +69,7 @@ class CorrectionReview extends Component
 
     public function applyAll(): void
     {
-        app(CorrectionService::class)->apply($this->interaction());
-
-        Notification::make()->title('Correction appliquée')->success()->send();
+        $this->applyValues(null);
     }
 
     public function applySelected(): void
@@ -69,9 +82,27 @@ class CorrectionReview extends Component
             return;
         }
 
-        app(CorrectionService::class)->apply($this->interaction(), $fields);
+        $this->applyValues($fields);
+    }
 
-        Notification::make()->title('Correction appliquée')->success()->send();
+    /** @param array<int, string>|null $onlyFields */
+    private function applyValues(?array $onlyFields): void
+    {
+        $interaction = $this->interaction();
+
+        if ($this->autoApply) {
+            app(CorrectionService::class)->apply($interaction, $onlyFields);
+            Notification::make()->title('Correction appliquée')->success()->send();
+
+            return;
+        }
+
+        $values = $onlyFields === null
+            ? ($interaction->output ?? [])
+            : array_intersect_key($interaction->output ?? [], array_flip($onlyFields));
+
+        $interaction->markApplied();
+        $this->dispatch('filament-prism:correction-applied', interactionId: $interaction->getKey(), values: $values);
     }
 
     public function discard(): void

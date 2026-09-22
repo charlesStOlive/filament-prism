@@ -2,8 +2,8 @@
 
 namespace CharlesStOlive\FilamentPrism\Filament\Actions;
 
-use CharlesStOlive\FilamentPrism\Concerns\Correctable;
 use CharlesStOlive\FilamentPrism\Livewire\CorrectionReview;
+use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
 use Closure;
 use Filament\Actions\Action;
 use Filament\Schemas\Components\Section;
@@ -14,22 +14,31 @@ use RuntimeException;
 /**
  * Ouvre la revue de correction dans une modale (variante « popup ») :
  *
+ *     // Un modèle Correctable, écrit et sauvegardé directement à l'application :
  *     CorrectionAction::make()->correctable(fn () => $this->period)
+ *
+ *     // Un FieldsCorrectionSubject (ex. état Livewire) : rien à écrire tout seul,
+ *     // voir autoApply() et l'événement filament-prism:correction-applied.
+ *     CorrectionAction::make()
+ *         ->correctable(fn () => FieldsCorrectionSubject::make(...))
+ *         ->autoApply(false)
  */
 class CorrectionAction extends Action
 {
-    protected Model|Closure|null $correctable = null;
+    protected CorrectionSubject|Closure|null $correctable = null;
 
     protected string|Closure $taskKey = 'orthography';
 
     protected Model|Closure|null $trackable = null;
+
+    protected bool|Closure $autoApply = true;
 
     public static function getDefaultName(): ?string
     {
         return 'aiCorrection';
     }
 
-    public function correctable(Model|Closure $correctable): static
+    public function correctable(CorrectionSubject|Closure $correctable): static
     {
         $this->correctable = $correctable;
 
@@ -50,15 +59,27 @@ class CorrectionAction extends Action
         return $this;
     }
 
-    protected function getCorrectable(): Model
+    /**
+     * `false` quand le sujet ne sait pas écrire lui-même son résultat (voir
+     * `CorrectionSubject`) : « Appliquer » se contente alors de marquer
+     * l'interaction et d'envoyer les valeurs choisies à qui a ouvert l'action.
+     */
+    public function autoApply(bool|Closure $autoApply): static
     {
-        $correctable = $this->evaluate($this->correctable);
+        $this->autoApply = $autoApply;
 
-        if (! $correctable instanceof Model || ! in_array(Correctable::class, class_uses_recursive($correctable), true)) {
-            throw new RuntimeException('CorrectionAction::correctable() doit recevoir un modèle utilisant le trait Correctable.');
+        return $this;
+    }
+
+    protected function getSubject(): CorrectionSubject
+    {
+        $subject = $this->evaluate($this->correctable);
+
+        if (! $subject instanceof CorrectionSubject) {
+            throw new RuntimeException('CorrectionAction::correctable() doit recevoir un CorrectionSubject (un modèle Correctable, ou un FieldsCorrectionSubject).');
         }
 
-        return $correctable;
+        return $subject;
     }
 
     protected function setUp(): void
@@ -74,10 +95,11 @@ class CorrectionAction extends Action
             ->modalCancelActionLabel('Fermer')
             ->schema(fn (): array => [
                 Section::make()->schema([
-                    CorrectionReview::forCorrectable(
-                        $this->getCorrectable(),
+                    CorrectionReview::forSubject(
+                        $this->getSubject(),
                         $this->evaluate($this->taskKey),
                         $this->evaluate($this->trackable),
+                        $this->evaluate($this->autoApply),
                     ),
                 ]),
             ]);

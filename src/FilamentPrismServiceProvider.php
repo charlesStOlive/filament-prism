@@ -17,6 +17,7 @@ class FilamentPrismServiceProvider extends PackageServiceProvider
             ->hasViews('filament-prism')
             ->hasMigrations([
                 'create_filament_prism_interactions_table',
+                'add_subject_key_to_ai_interactions_table',
             ]);
     }
 
