@@ -51,7 +51,7 @@ class WordDiff
     /** @return array<int, string> */
     private static function split(string $text): array
     {
-        return preg_split('/(\s+)/u', trim($text), -1, PREG_SPLIT_NO_EMPTY | PREG_SPLIT_DELIM_CAPTURE) ?: [];
+        return preg_split('/\s+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: [];
     }
 
     /**
