@@ -18,6 +18,7 @@ s'ajoutent sans toucher au cœur du package.
   - [AiResultRenderer — comment afficher le résultat](#airesultrenderer--comment-afficher-le-résultat)
 - [Utilisation : un modèle Eloquent (`Correctable`)](#utilisation--un-modèle-eloquent-correctable)
 - [Utilisation : un texte hors modèle (`FieldsCorrectionSubject`)](#utilisation--un-texte-hors-modèle-fieldscorrectionsubject)
+- [Utilisation : plusieurs sujets en un seul appel (`CorrectionSubjectGroup`)](#utilisation--plusieurs-sujets-en-un-seul-appel-correctionsubjectgroup)
 - [Widgets de consommation](#widgets-de-consommation)
 - [Roadmap (hors périmètre v1)](#roadmap-hors-périmètre-v1)
 
@@ -217,6 +218,69 @@ public function onCorrectionApplied(int $interactionId, array $values): void
 }
 ```
 
+## Utilisation : plusieurs sujets en un seul appel (`CorrectionSubjectGroup`)
+
+Corriger plusieurs sujets qui partagent les mêmes champs — toutes les
+périodes d'un voyage, par exemple — en **un seul appel IA** plutôt qu'un par
+sujet : un schéma Prism répété (`{items: [{key, title, body}, ...]}`,
+`CorrectableField::toGroupedObjectSchema()`), une seule `AiInteraction`.
+`output.items` associe chaque correction reçue à son sujet par sa `key`,
+jamais par position — l'IA ne garantit ni l'ordre ni la présence de chaque
+élément demandé.
+
+```php
+use CharlesStOlive\FilamentPrism\Filament\Actions\GroupCorrectionAction;
+use CharlesStOlive\FilamentPrism\Support\CorrectionSubjectGroup;
+
+GroupCorrectionAction::make()
+    ->visible(fn (): bool => $this->correctableDays() !== [])
+    ->trackable(fn (): Model => $this->record)
+    ->subjects(function (): CorrectionSubjectGroup {
+        $subjects = [];
+
+        foreach ($this->correctableDays() as $day) {
+            $subjects[$day['slug']] = FieldsCorrectionSubject::make(
+                model: $this->record,
+                key: 'day:'.$day['slug'],
+                fields: [CorrectableField::make('title'), CorrectableField::make('body')->html()],
+                get: fn (): array => Arr::only($day, ['title', 'body']),
+            );
+        }
+
+        return CorrectionSubjectGroup::make(model: $this->record, key: 'all-days', subjects: $subjects);
+    });
+```
+
+`GroupCorrectionAction::subjects()` (et non `group()` — `Filament\Actions\Action`
+porte déjà une méthode `group()` pour regrouper des actions dans un menu ;
+une méthode du même nom avec une signature incompatible y déclare une erreur
+fatale de classe, détectée seulement au premier rendu de la page, jamais au
+chargement de la classe — un piège pour quiconque écrirait une nouvelle
+action Filament avec un nom de méthode qui semble libre).
+
+Comme `FieldsCorrectionSubject`, un groupe ne sait pas écrire son résultat
+tout seul : `GroupCorrectionReview` envoie toujours les sujets choisis via
+l'événement `filament-prism:group-correction-applied` (`values` keyed par la
+même clé que `subjects`, ex. le slug) :
+
+```php
+#[On('filament-prism:group-correction-applied')]
+public function onGroupCorrectionApplied(int $interactionId, array $values): void
+{
+    $days = array_values($this->data['days'] ?? []);
+
+    foreach ($days as $index => $day) {
+        if (isset($day['slug'], $values[$day['slug']])) {
+            $days[$index] = [...$day, ...$values[$day['slug']]];
+        }
+    }
+
+    $this->data['days'] = $days;
+    $this->save(shouldRedirect: false, shouldSendSavedNotification: false); // pas de brouillon ouvert ici, contrairement
+    $this->fillForm();                                                     // au cas seul : on enregistre tout de suite.
+}
+```
+
 ## Widgets de consommation
 
 - `AiTokenUsageOverview` — tokens de l'utilisateur courant, aujourd'hui / ce
@@ -233,8 +297,5 @@ public function onCorrectionApplied(int $interactionId, array $values): void
 - D'autres tâches que `orthography` (traduction, reformulation...).
 - Un vrai dialogue multi-tours (`thread_id`/`parent_interaction_id` déjà en
   place, inutilisés).
-- Correction d'un voyage/présentation complet en un seul appel (plusieurs
-  sujets à la fois) — le socle le permet, mais seule la période seule est
-  câblée pour l'instant.
 - Tests Pest côté package lui-même (aujourd'hui couvert côté application,
   `desapp/tests/Feature/VoyageCorrectionTest.php`, avec `Prism::fake()`).

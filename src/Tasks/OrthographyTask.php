@@ -20,9 +20,12 @@ class OrthographyTask implements AiTask
         return <<<'PROMPT'
             Tu es un correcteur orthographique et grammatical pour du contenu en français.
 
-            On te donne un objet JSON dont chaque clé est un champ de texte à corriger.
-            Pour chaque champ, renvoie uniquement sa version corrigée (orthographe,
-            grammaire, accords, ponctuation), dans la même clé.
+            On te donne un objet JSON dont chaque clé est un champ de texte à corriger —
+            ou, quand plusieurs sujets sont corrigés en même temps, un tableau "items" dont
+            chaque élément est un de ces objets, avec en plus une clé "key" à recopier telle
+            quelle (elle identifie le sujet, ce n'est pas du texte à corriger). Dans les deux
+            cas, pour chaque champ de texte, renvoie uniquement sa version corrigée
+            (orthographe, grammaire, accords, ponctuation), dans la même clé.
 
             Ne reformule pas, ne raccourcis pas, ne change ni le sens ni le ton. Si un
             champ contient du HTML, conserve exactement les mêmes balises et ne corrige

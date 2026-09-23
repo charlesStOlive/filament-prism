@@ -7,10 +7,12 @@ use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Support\CorrectableField;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
+use CharlesStOlive\FilamentPrism\Support\CorrectionSubjectGroup;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\ValueObjects\Usage;
 use RuntimeException;
 
 class CorrectionService
@@ -29,20 +31,7 @@ class CorrectionService
     {
         $model = $subject->model();
 
-        $pending = AiInteraction::query()
-            ->where('correctable_type', $model::class)
-            ->where('correctable_id', $model->getKey())
-            ->when(
-                $subject->key() === null,
-                fn (Builder $query) => $query->whereNull('subject_key'),
-                fn (Builder $query) => $query->where('subject_key', $subject->key()),
-            )
-            ->where('task', $taskKey)
-            ->where('status', 'pending')
-            ->latest('id')
-            ->first();
-
-        if ($pending) {
+        if ($pending = $this->findPending($model, $subject->key(), $taskKey)) {
             return $pending;
         }
 
@@ -56,21 +45,84 @@ class CorrectionService
             ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))
             ->asStructured();
 
+        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $subject->key(), $trackable, $input, $response->structured, $response->usage);
+    }
+
+    /**
+     * Corrige plusieurs sujets — les périodes d'un voyage entier, par exemple
+     * — en **un seul appel IA**, plutôt qu'un par sujet : un schéma Prism
+     * répété (`CorrectableField::toGroupedObjectSchema()`), une seule
+     * `AiInteraction`. Chaque sujet doit partager les mêmes champs (voir
+     * `CorrectionSubjectGroup`).
+     *
+     * `output.items` associe la correction reçue à son sujet par sa `key` —
+     * jamais par position : l'IA ne garantit ni l'ordre ni la présence de
+     * chaque élément demandé.
+     */
+    public function correctGroup(CorrectionSubjectGroup $group, string $taskKey = 'orthography', ?Model $trackable = null): AiInteraction
+    {
+        $model = $group->model();
+
+        if ($pending = $this->findPending($model, $group->key(), $taskKey)) {
+            return $pending;
+        }
+
+        $task = $this->tasks->get($taskKey);
+
+        $input = [
+            'items' => collect($group->subjects())
+                ->map(fn (CorrectionSubject $subject, string $key): array => ['key' => $key, ...$subject->extractValues()])
+                ->values()
+                ->all(),
+        ];
+
+        $response = Prism::structured()
+            ->using($task->provider(), $task->model())
+            ->withSchema(CorrectableField::toGroupedObjectSchema($group->fields()))
+            ->withSystemPrompt($task->systemPrompt())
+            ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))
+            ->asStructured();
+
+        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $group->key(), $trackable, $input, $response->structured, $response->usage);
+    }
+
+    private function findPending(Model $model, ?string $subjectKey, string $taskKey): ?AiInteraction
+    {
+        return AiInteraction::query()
+            ->where('correctable_type', $model::class)
+            ->where('correctable_id', $model->getKey())
+            ->when(
+                $subjectKey === null,
+                fn (Builder $query) => $query->whereNull('subject_key'),
+                fn (Builder $query) => $query->where('subject_key', $subjectKey),
+            )
+            ->where('task', $taskKey)
+            ->where('status', 'pending')
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>|null  $output
+     */
+    private function persist(string $taskKey, string $provider, string $model, Model $correctable, ?string $subjectKey, ?Model $trackable, array $input, ?array $output, Usage $usage): AiInteraction
+    {
         return AiInteraction::create([
             'user_id' => auth()->id(),
-            'task' => $task->key(),
-            'provider' => $task->provider(),
-            'model' => $task->model(),
-            'correctable_type' => $model::class,
-            'correctable_id' => $model->getKey(),
-            'subject_key' => $subject->key(),
+            'task' => $taskKey,
+            'provider' => $provider,
+            'model' => $model,
+            'correctable_type' => $correctable::class,
+            'correctable_id' => $correctable->getKey(),
+            'subject_key' => $subjectKey,
             'trackable_type' => $trackable?->getMorphClass(),
             'trackable_id' => $trackable?->getKey(),
             'input' => $input,
-            'output' => $response->structured,
-            'prompt_tokens' => $response->usage->promptTokens,
-            'completion_tokens' => $response->usage->completionTokens,
-            'total_tokens' => $response->usage->promptTokens + $response->usage->completionTokens,
+            'output' => $output,
+            'prompt_tokens' => $usage->promptTokens,
+            'completion_tokens' => $usage->completionTokens,
+            'total_tokens' => $usage->promptTokens + $usage->completionTokens,
             'status' => 'pending',
             'thread_id' => (string) Str::uuid(),
         ]);
