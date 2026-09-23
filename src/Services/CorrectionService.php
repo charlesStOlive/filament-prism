@@ -7,13 +7,17 @@ use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Support\CorrectableField;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
+use CharlesStOlive\FilamentPrism\Support\AiProviderException;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubjectGroup;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use Prism\Prism\Contracts\Schema;
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Structured\Response;
 use Prism\Prism\ValueObjects\Usage;
 use RuntimeException;
+use Throwable;
 
 class CorrectionService
 {
@@ -37,13 +41,7 @@ class CorrectionService
 
         $task = $this->tasks->get($taskKey);
         $input = $subject->extractValues();
-
-        $response = Prism::structured()
-            ->using($task->provider(), $task->model())
-            ->withSchema(CorrectableField::toObjectSchema($subject->fields()))
-            ->withSystemPrompt($task->systemPrompt())
-            ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))
-            ->asStructured();
+        $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toObjectSchema($subject->fields()), $input);
 
         return $this->persist($task->key(), $task->provider(), $task->model(), $model, $subject->key(), $trackable, $input, $response->structured, $response->usage);
     }
@@ -76,14 +74,45 @@ class CorrectionService
                 ->all(),
         ];
 
-        $response = Prism::structured()
-            ->using($task->provider(), $task->model())
-            ->withSchema(CorrectableField::toGroupedObjectSchema($group->fields()))
-            ->withSystemPrompt($task->systemPrompt())
-            ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))
-            ->asStructured();
+        $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toGroupedObjectSchema($group->fields()), $input);
 
         return $this->persist($task->key(), $task->provider(), $task->model(), $model, $group->key(), $trackable, $input, $response->structured, $response->usage);
+    }
+
+    /**
+     * Le provider a-t-il de quoi appeler l'IA ? Une clé non vide quand ce
+     * provider en a une (`config('prism.providers.<provider>.api_key')`) —
+     * absente de la config pour un provider qui n'en a pas besoin (ex.
+     * ollama en local), auquel cas rien à vérifier. Sert à désactiver
+     * proprement `CorrectionAction`/`GroupCorrectionAction` plutôt que de
+     * lancer un appel voué à échouer.
+     */
+    public function providerIsConfigured(string $provider): bool
+    {
+        $config = config("prism.providers.{$provider}", []);
+
+        return ! array_key_exists('api_key', $config) || filled($config['api_key']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     *
+     * @throws AiProviderException Clé refusée, réseau, quota... — jamais l'exception brute de
+     *                              Prism/du client HTTP, pour que l'appelant puisse en montrer le
+     *                              message tel quel plutôt que planter (voir CorrectionAction).
+     */
+    private function callAi(string $provider, string $model, string $systemPrompt, Schema $schema, array $input): Response
+    {
+        try {
+            return Prism::structured()
+                ->using($provider, $model)
+                ->withSchema($schema)
+                ->withSystemPrompt($systemPrompt)
+                ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))
+                ->asStructured();
+        } catch (Throwable $exception) {
+            throw AiProviderException::fromThrowable($exception);
+        }
     }
 
     private function findPending(Model $model, ?string $subjectKey, string $taskKey): ?AiInteraction

@@ -16,6 +16,7 @@ s'ajoutent sans toucher au cœur du package.
   - [CorrectionSubject — quoi corriger](#correctionsubject--quoi-corriger)
   - [CorrectionService — appeler l'IA et appliquer le résultat](#correctionservice--appeler-lia-et-appliquer-le-résultat)
   - [AiResultRenderer — comment afficher le résultat](#airesultrenderer--comment-afficher-le-résultat)
+  - [Sans clé API — échec propre plutôt qu'un plantage](#sans-clé-api--échec-propre-plutôt-quun-plantage)
 - [Utilisation : un modèle Eloquent (`Correctable`)](#utilisation--un-modèle-eloquent-correctable)
 - [Utilisation : un texte hors modèle (`FieldsCorrectionSubject`)](#utilisation--un-texte-hors-modèle-fieldscorrectionsubject)
 - [Utilisation : plusieurs sujets en un seul appel (`CorrectionSubjectGroup`)](#utilisation--plusieurs-sujets-en-un-seul-appel-correctionsubjectgroup)
@@ -134,6 +135,24 @@ Chaque `AiTask` déclare son `rendererClass()`. `OrthographyTask` utilise
 lib JS), texte retiré barré, texte ajouté souligné. Un futur `ChoiceRenderer`
 (réponse = un choix parmi plusieurs options, affiché en boutons plutôt qu'en
 diff) suivrait le même contrat sans toucher au reste du package.
+
+### Sans clé API — échec propre plutôt qu'un plantage
+
+La clé API se configure côté `prism-php/prism`, pas côté `filament-prism` —
+pour le provider par défaut (`openai`), c'est **`OPENAI_API_KEY`** dans
+`.env` (chaque provider a la sienne, voir `config/prism.php`, publié par
+`prism-php/prism` : `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`...). Tant qu'elle
+est absente, `CorrectionAction`/`GroupCorrectionAction` se désactivent
+toutes seules (`CorrectionService::providerIsConfigured()`), avec un
+tooltip qui le dit — inutile de cliquer sur un appel voué à échouer.
+
+Si l'appel échoue quand même une fois lancé (clé refusée, réseau, quota...),
+`CorrectionService` ne laisse jamais fuir l'exception brute du client HTTP :
+elle est rattrapée et retraduite en `AiProviderException`, avec un message
+sûr à montrer. Les deux actions l'attrapent à leur tour et affichent ce
+message dans la modale au lieu de planter la page. Dans les deux cas,
+l'exception d'origine reste signalée (`report()`), donc visible dans les
+logs pour diagnostiquer.
 
 ## Utilisation : un modèle Eloquent (`Correctable`)
 

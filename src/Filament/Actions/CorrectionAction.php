@@ -3,9 +3,14 @@
 namespace CharlesStOlive\FilamentPrism\Filament\Actions;
 
 use CharlesStOlive\FilamentPrism\Livewire\CorrectionReview;
+use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
+use CharlesStOlive\FilamentPrism\Services\CorrectionService;
+use CharlesStOlive\FilamentPrism\Support\AiProviderException;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
+use CharlesStOlive\FilamentPrism\Tasks\AiTask;
 use Closure;
 use Filament\Actions\Action;
+use Filament\Forms\Components\Placeholder;
 use Filament\Schemas\Components\Section;
 use Filament\Support\Enums\Width;
 use Illuminate\Database\Eloquent\Model;
@@ -22,6 +27,12 @@ use RuntimeException;
  *     CorrectionAction::make()
  *         ->correctable(fn () => FieldsCorrectionSubject::make(...))
  *         ->autoApply(false)
+ *
+ * Désactivée toute seule quand le provider de la tâche n'a pas de clé API
+ * configurée (voir `CorrectionService::providerIsConfigured()`) — inutile de
+ * laisser cliquer sur un appel voué à échouer. Si l'appel échoue quand même
+ * (clé refusée, réseau, quota...), la modale s'ouvre sur un message clair au
+ * lieu de planter (voir `AiProviderException`).
  */
 class CorrectionAction extends Action
 {
@@ -82,6 +93,11 @@ class CorrectionAction extends Action
         return $subject;
     }
 
+    protected function getTask(): AiTask
+    {
+        return app(AiTaskRegistry::class)->get($this->evaluate($this->taskKey));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -93,15 +109,28 @@ class CorrectionAction extends Action
             ->modalWidth(Width::ThreeExtraLarge)
             ->modalSubmitAction(false)
             ->modalCancelActionLabel('Fermer')
-            ->schema(fn (): array => [
-                Section::make()->schema([
-                    CorrectionReview::forSubject(
+            ->disabled(fn (): bool => ! app(CorrectionService::class)->providerIsConfigured($this->getTask()->provider()))
+            ->tooltip(fn (): ?string => app(CorrectionService::class)->providerIsConfigured($this->getTask()->provider())
+                ? null
+                : 'Clé API manquante pour ce provider — voir le fichier .env.')
+            ->schema(function (): array {
+                try {
+                    $review = CorrectionReview::forSubject(
                         $this->getSubject(),
                         $this->evaluate($this->taskKey),
                         $this->evaluate($this->trackable),
                         $this->evaluate($this->autoApply),
-                    ),
-                ]),
-            ]);
+                    );
+                } catch (AiProviderException $exception) {
+                    return [
+                        Placeholder::make('aiProviderError')
+                            ->label('Correction impossible')
+                            ->content($exception->getMessage())
+                            ->columnSpanFull(),
+                    ];
+                }
+
+                return [Section::make()->schema([$review])];
+            });
     }
 }
