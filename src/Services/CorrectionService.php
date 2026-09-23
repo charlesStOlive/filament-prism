@@ -44,7 +44,7 @@ class CorrectionService
         $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toObjectSchema($subject->fields()), $input);
         $output = CorrectableField::sanitizeValues($subject->fields(), $response->structured ?? []);
 
-        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $subject->key(), $trackable, $input, $output, $response->usage);
+        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $subject->key(), $trackable, $input, $output, $response->usage, CorrectableField::labelsByName($subject->fields()));
     }
 
     /**
@@ -86,7 +86,7 @@ class CorrectionService
             ->values()
             ->all();
 
-        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $group->key(), $trackable, $input, ['items' => $items], $response->usage);
+        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $group->key(), $trackable, $input, ['items' => $items], $response->usage, CorrectableField::labelsByName($group->fields()));
     }
 
     /**
@@ -144,8 +144,13 @@ class CorrectionService
     /**
      * @param  array<string, mixed>  $input
      * @param  array<string, mixed>|null  $output
+     * @param  array<string, string>  $labels  Le libellé de chaque champ (voir
+     *                                          `CorrectableField::labelsByName()`), posé dans `meta`
+     *                                          pour que le renderer puisse s'en servir plus tard sans
+     *                                          connaître le `CorrectionSubject` d'origine — lui ne
+     *                                          reçoit que l'`AiInteraction` déjà persistée.
      */
-    private function persist(string $taskKey, string $provider, string $model, Model $correctable, ?string $subjectKey, ?Model $trackable, array $input, ?array $output, Usage $usage): AiInteraction
+    private function persist(string $taskKey, string $provider, string $model, Model $correctable, ?string $subjectKey, ?Model $trackable, array $input, ?array $output, Usage $usage, array $labels = []): AiInteraction
     {
         return AiInteraction::create([
             'user_id' => auth()->id(),
@@ -159,6 +164,7 @@ class CorrectionService
             'trackable_id' => $trackable?->getKey(),
             'input' => $input,
             'output' => $output,
+            'meta' => $labels === [] ? null : ['labels' => $labels],
             'prompt_tokens' => $usage->promptTokens,
             'completion_tokens' => $usage->completionTokens,
             'total_tokens' => $usage->promptTokens + $usage->completionTokens,

@@ -72,7 +72,7 @@ Colonnes notables :
 | `input`/`output` | Les valeurs envoyées, et la réponse structurée de l'IA (déjà décodée par Prism, pas de regex). |
 | `status` | `pending` → `applied`/`discarded`. Rien n'est supprimé au clic « ignorer » : l'historique reste consultable. |
 | `thread_id`/`parent_interaction_id` | Posées maintenant, inutilisées en v1 (chaque interaction est un fil à elle seule) : Prism sait déjà rejouer un historique de messages (`withMessages()`), elles éviteront un `ALTER TABLE` le jour où un vrai dialogue multi-tours existera. |
-| `meta` (json) | Réservée aux futurs `AiResultRenderer` qui en ont besoin (ex. un `ChoiceRenderer` y noterait l'option choisie) ; `TextDiffRenderer` ne l'utilise pas. |
+| `meta` (json) | Ce dont un renderer a besoin sans connaître le `CorrectionSubject` d'origine (il ne survit pas à la requête qui a appelé l'IA) : `meta.labels` porte le libellé de chaque champ (`CorrectableField::labelsByName()`), utilisé par `TextDiffRenderer`/`GroupedTextDiffRenderer` — sans ça, `CorrectableField::make('body')->label('Contenu')` n'aurait aucun effet visible, la vue régénérant un libellé générique (`Str::headline($field)`) faute d'accès à la déclaration d'origine. Un futur `ChoiceRenderer` y noterait par exemple l'option choisie. |
 
 ### `AiTask` / `AiTaskRegistry` — le registre de tâches
 
@@ -218,8 +218,14 @@ CorrectionAction::make()
     ->correctable(fn (): FieldsCorrectionSubject => FieldsCorrectionSubject::make(
         model: $this->record,
         key: 'day:'.$this->dayData['node_key'], // distingue cette période des autres du même voyage
-        fields: [CorrectableField::make('title'), CorrectableField::make('body')->html()],
-        get: fn (): array => Arr::only($this->dayData, ['title', 'body']),
+        fields: [
+            CorrectableField::make('title')->label('Titre'),   // même libellé que le vrai champ du
+            CorrectableField::make('body')->label('Contenu')->html(), // formulaire (voir meta.labels plus haut)
+        ],
+        get: fn (): array => [
+            'title' => (string) ($this->dayData['title'] ?? ''),
+            'body' => $this->bodyToHtml($this->dayData['body'] ?? null), // voir l'encart RichEditor ci-dessous
+        ],
     ));
 ```
 
@@ -232,10 +238,38 @@ l'action de les écrire (et de décider si/quand les persister) :
 #[On('filament-prism:correction-applied')]
 public function onCorrectionApplied(int $interactionId, array $values): void
 {
+    if (array_key_exists('body', $values)) {
+        $values['body'] = $this->bodyFromHtml((string) $values['body']); // voir l'encart RichEditor
+    }
+
     $this->dayData = [...$this->dayData, ...$values]; // un brouillon, comme une frappe au clavier —
     // toujours à enregistrer via le bouton existant de la page, pas déjà en base.
 }
 ```
+
+> **Piège rencontré : un champ `RichEditor` de Filament n'est pas du HTML tant
+> que le formulaire est ouvert.** Sa valeur Livewire live (`$dayData['body']`
+> ici) est la structure TipTap native du champ (un document JSON) ; Filament
+> ne la dehydrate en HTML qu'au moment de `$schema->getState()` (à la vraie
+> soumission). L'envoyer telle quelle à l'IA la ferait « corriger » du JSON
+> comme du texte — et un résultat mal formé réinjecté dans `$dayData['body']`
+> casserait l'éditeur, faute de modèle Eloquent pour le retyper au passage.
+> Solution : convertir dans les deux sens via l'éditeur TipTap **du champ
+> lui-même** (pas une instance nue — il faut ses plugins, ex. des liens ou
+> des références d'image personnalisés, pour ne rien perdre au passage) :
+>
+> ```php
+> private function bodyToHtml(mixed $tiptapDocument): string
+> {
+>     $field = $this->getSchema('dayForm')->getComponent('body'); // le RichEditor, configuré
+>     return $field->getTipTapEditor()->setContent($tiptapDocument ?? ['type' => 'doc', 'content' => []])->getHtml();
+> }
+>
+> private function bodyFromHtml(string $html): array
+> {
+>     return $this->getSchema('dayForm')->getComponent('body')->getTipTapEditor()->setContent($html)->getDocument();
+> }
+> ```
 
 ## Utilisation : plusieurs sujets en un seul appel (`CorrectionSubjectGroup`)
 

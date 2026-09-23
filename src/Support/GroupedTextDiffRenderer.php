@@ -4,6 +4,7 @@ namespace CharlesStOlive\FilamentPrism\Support;
 
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use Illuminate\Contracts\View\View;
+use Illuminate\Support\Str;
 
 /**
  * Le pendant de `TextDiffRenderer` pour une correction de groupe
@@ -26,20 +27,23 @@ class GroupedTextDiffRenderer
     /** @param array<string, array<string, mixed>> $inputByKey */
     public function render(AiInteraction $interaction, array $inputByKey): View
     {
+        $labels = $interaction->meta['labels'] ?? [];
+
         $items = collect($interaction->output['items'] ?? [])
             ->filter(fn (array $item): bool => isset($item['key'], $inputByKey[$item['key']]))
-            ->map(function (array $item) use ($inputByKey): array {
+            ->map(function (array $item) use ($inputByKey, $labels): array {
                 $before = $inputByKey[$item['key']];
 
                 $fields = collect($item)
                     ->except(['key'])
                     ->keys()
-                    ->map(function (string $field) use ($before, $item): array {
+                    ->map(function (string $field) use ($before, $item, $labels): array {
                         $beforeText = self::toText($before[$field] ?? '');
                         $afterText = self::toText($item[$field] ?? '');
 
                         return [
                             'field' => $field,
+                            'label' => $labels[$field] ?? Str::headline($field),
                             'unchanged' => strip_tags($beforeText) === strip_tags($afterText),
                             'segments' => WordDiff::compare(strip_tags($beforeText), strip_tags($afterText)),
                         ];

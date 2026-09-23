@@ -14,7 +14,7 @@
                 @foreach ($item['fields'] as $entry)
                     <div>
                         <span class="block text-sm font-medium text-gray-950 dark:text-white">
-                            {{ \Illuminate\Support\Str::headline($entry['field']) }}
+                            {{ $entry['label'] }}
                         </span>
 
                         @if ($entry['unchanged'])

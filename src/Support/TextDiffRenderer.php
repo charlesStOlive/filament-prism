@@ -4,6 +4,7 @@ namespace CharlesStOlive\FilamentPrism\Support;
 
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use Illuminate\Contracts\View\View;
+use Illuminate\Support\Str;
 
 /**
  * Renderer par défaut : un diff mot-à-mot par champ corrigé, texte ajouté
@@ -23,15 +24,17 @@ class TextDiffRenderer implements AiResultRenderer
     {
         $input = $interaction->input ?? [];
         $output = $interaction->output ?? [];
+        $labels = $interaction->meta['labels'] ?? [];
 
         $fields = collect($output)
             ->keys()
-            ->map(function (string $field) use ($input, $output): array {
+            ->map(function (string $field) use ($input, $output, $labels): array {
                 $before = self::toText($input[$field] ?? '');
                 $after = self::toText($output[$field] ?? '');
 
                 return [
                     'field' => $field,
+                    'label' => $labels[$field] ?? Str::headline($field),
                     'unchanged' => strip_tags($before) === strip_tags($after),
                     'segments' => WordDiff::compare(strip_tags($before), strip_tags($after)),
                 ];

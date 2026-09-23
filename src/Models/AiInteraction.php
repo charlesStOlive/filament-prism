@@ -17,9 +17,12 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * seule) : colonnes posées maintenant pour éviter un ALTER plus tard sur une
  * table qui contiendra déjà de l'historique réel.
  *
- * `meta` (json, nullable) est réservée aux renderers qui en ont besoin (ex.
- * un futur `ChoiceRenderer` y note l'option choisie) ; le `TextDiffRenderer`
- * v1 ne l'utilise pas.
+ * `meta` (json, nullable) porte ce dont un renderer a besoin sans connaître le
+ * `CorrectionSubject` d'origine (qui ne survit pas à la requête ayant appelé
+ * l'IA) : `meta.labels` (le libellé de chaque champ, voir
+ * `CorrectableField::labelsByName()`) pour `TextDiffRenderer`/
+ * `GroupedTextDiffRenderer` ; un futur `ChoiceRenderer` y noterait l'option
+ * choisie.
  *
  * `subject_key` distingue plusieurs `CorrectionSubject` qui se rattacheraient
  * au même modèle (ex. plusieurs périodes d'un même voyage, voir

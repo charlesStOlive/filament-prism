@@ -149,4 +149,19 @@ class CorrectableField
             })
             ->all();
     }
+
+    /**
+     * Le libellé de chaque champ, par nom — posé dans `AiInteraction.meta` à la persistance
+     * (`CorrectionService::persist()`) : le renderer (`TextDiffRenderer`/`GroupedTextDiffRenderer`)
+     * n'a accès qu'à l'`AiInteraction` déjà en base, jamais aux `CorrectableField` d'origine (le
+     * `CorrectionSubject` ne survit pas à la requête qui a appelé l'IA) — sans ça, un `->label()`
+     * personnalisé n'aurait jamais aucun effet sur l'affichage, silencieusement ignoré.
+     *
+     * @param  array<int, CorrectableField>  $fields
+     * @return array<string, string>
+     */
+    public static function labelsByName(array $fields): array
+    {
+        return collect($fields)->mapWithKeys(fn (self $field): array => [$field->name => $field->getLabel()])->all();
+    }
 }
