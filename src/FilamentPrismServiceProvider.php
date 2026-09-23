@@ -4,6 +4,8 @@ namespace CharlesStOlive\FilamentPrism;
 
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Services\CorrectionService;
+use Filament\Support\Assets\Css;
+use Filament\Support\Facades\FilamentAsset;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -25,5 +27,16 @@ class FilamentPrismServiceProvider extends PackageServiceProvider
     {
         $this->app->singleton(AiTaskRegistry::class);
         $this->app->singleton(CorrectionService::class);
+    }
+
+    /**
+     * Le CSS de la revue (voir resources/css/filament-prism.css) : publié avec les autres assets de
+     * Filament (`php artisan filament:assets`, lancé aussi par `filament:upgrade` après composer).
+     */
+    public function packageBooted(): void
+    {
+        FilamentAsset::register([
+            Css::make('filament-prism', __DIR__.'/../resources/css/filament-prism.css'),
+        ], 'charlesstolive/filament-prism');
     }
 }

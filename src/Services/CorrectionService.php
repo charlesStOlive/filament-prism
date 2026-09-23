@@ -107,6 +107,10 @@ class CorrectionService
     }
 
     /**
+     * `JSON_UNESCAPED_SLASHES` n'est pas cosmétique : sans lui, chaque `</p>` du HTML envoyé devient
+     * `<\/p>` dans le prompt, et l'IA imite ce style dans sa réponse — de vrais antislashs dans le
+     * texte, que le parseur HTML ne reconnaît plus comme des balises fermantes.
+     *
      * @param  array<string, mixed>  $input
      *
      * @throws AiProviderException Clé refusée, réseau, quota... — jamais l'exception brute de
@@ -120,7 +124,7 @@ class CorrectionService
                 ->using($provider, $model)
                 ->withSchema($schema)
                 ->withSystemPrompt($systemPrompt)
-                ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR))
+                ->withPrompt(json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))
                 ->asStructured();
         } catch (Throwable $exception) {
             throw AiProviderException::fromThrowable($exception);

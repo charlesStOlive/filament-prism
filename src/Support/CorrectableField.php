@@ -135,6 +135,11 @@ class CorrectableField
      * telle quelle — le champ apparaîtra « vidé » dans le diff, visible et
      * sans danger tant que l'utilisateur ne l'a pas explicitement appliqué.
      *
+     * Pour un champ HTML, les séquences `\/` (et `\r\/`, `\n\/`) redeviennent `/` : c'est la trace
+     * d'un JSON mal digéré par l'IA (voir `CorrectionService::callAi()`), jamais du texte voulu — et
+     * `<\/p>` n'est pas une balise fermante pour un parseur HTML, qui laisserait alors l'élément
+     * ouvert avaler la suite du texte.
+     *
      * @param  array<int, CorrectableField>  $fields
      * @param  array<string, mixed>  $values
      * @return array<string, string>
@@ -144,8 +149,13 @@ class CorrectableField
         return collect($fields)
             ->mapWithKeys(function (self $field) use ($values): array {
                 $value = $values[$field->name] ?? '';
+                $value = is_scalar($value) ? (string) $value : '';
 
-                return [$field->name => is_scalar($value) ? (string) $value : ''];
+                if ($field->isHtml()) {
+                    $value = preg_replace('#\\\\(?:[rn]\\\\)?/#', '/', $value) ?? $value;
+                }
+
+                return [$field->name => $value];
             })
             ->all();
     }

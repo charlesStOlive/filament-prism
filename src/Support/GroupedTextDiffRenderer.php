@@ -17,10 +17,7 @@ use Illuminate\Support\Str;
  * (toujours `{items: [...]}`), indépendante de la tâche — `GroupCorrectionReview`
  * l'appelle donc directement.
  *
- * `CorrectionService::correctGroup()` filtre déjà chaque champ en chaîne
- * avant de persister (`CorrectableField::sanitizeValues()`) — voir la
- * docblock de `TextDiffRenderer::plainText()`, même filet ici pour une
- * interaction déjà en base avant ce filtre.
+ * Même extraction de texte que `TextDiffRenderer` (`WordDiff::textOf()`).
  */
 class GroupedTextDiffRenderer
 {
@@ -38,8 +35,8 @@ class GroupedTextDiffRenderer
                     ->except(['key'])
                     ->keys()
                     ->map(function (string $field) use ($before, $item, $labels): array {
-                        $beforeText = self::plainText($before[$field] ?? '');
-                        $afterText = self::plainText($item[$field] ?? '');
+                        $beforeText = WordDiff::textOf($before[$field] ?? '');
+                        $afterText = WordDiff::textOf($item[$field] ?? '');
 
                         return [
                             'field' => $field,
@@ -60,11 +57,4 @@ class GroupedTextDiffRenderer
         ]);
     }
 
-    /** Voir la docblock équivalente dans `TextDiffRenderer::plainText()`. */
-    private static function plainText(mixed $value): string
-    {
-        $text = is_scalar($value) ? (string) $value : '';
-
-        return html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5);
-    }
 }

@@ -7,16 +7,12 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Support\Str;
 
 /**
- * Renderer par défaut : un diff mot-à-mot par champ corrigé, texte ajouté
- * souligné, texte retiré barré. Les champs HTML sont comparés à leur texte
- * brut (`strip_tags`) — la mise en forme n'est pas ce que corrige l'IA.
- *
- * `CorrectionService` filtre déjà chaque champ en chaîne avant de persister
- * (`CorrectableField::sanitizeValues()`) : la valeur brute d'un provider peu
- * scrupuleux (`[]` au lieu de `''`, par exemple) ne devrait donc jamais
- * arriver ici. Le filet ci-dessous (`toText()`) reste utile pour une
- * interaction déjà en base avant ce filtre — sans lui, `(string)` sur un
- * tableau lève une `ErrorException` (« Array to string conversion »).
+ * Renderer par défaut : un diff mot-à-mot par champ corrigé, en deux blocs
+ * « Avant » / « Après » (voir text-diff.blade.php). Les champs HTML sont
+ * comparés à leur texte lisible (`WordDiff::textOf()`) — la mise en forme
+ * n'est pas ce que corrige l'IA. `textOf()` accepte aussi une valeur non
+ * scalaire (une interaction en base d'avant `CorrectableField::sanitizeValues()`)
+ * sans lever « Array to string conversion ».
  */
 class TextDiffRenderer implements AiResultRenderer
 {
@@ -29,8 +25,8 @@ class TextDiffRenderer implements AiResultRenderer
         $fields = collect($output)
             ->keys()
             ->map(function (string $field) use ($input, $output, $labels): array {
-                $before = self::plainText($input[$field] ?? '');
-                $after = self::plainText($output[$field] ?? '');
+                $before = WordDiff::textOf($input[$field] ?? '');
+                $after = WordDiff::textOf($output[$field] ?? '');
 
                 return [
                     'field' => $field,
@@ -47,16 +43,4 @@ class TextDiffRenderer implements AiResultRenderer
         ]);
     }
 
-    /**
-     * Le texte réellement lisible d'un champ (HTML ou non) : balises retirées, puis entités décodées
-     * (`&#039;` -> `'`) — sans ça, une apostrophe encodée dans le HTML source resterait telle quelle,
-     * puis Blade (`{{ }}`, à raison, pour l'affichage) l'échapperait une seconde fois : l'entité
-     * apparaîtrait en toutes lettres à l'écran au lieu du caractère qu'elle représente.
-     */
-    private static function plainText(mixed $value): string
-    {
-        $text = is_scalar($value) ? (string) $value : '';
-
-        return html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5);
-    }
 }

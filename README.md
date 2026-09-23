@@ -138,11 +138,29 @@ Chaque `AiTask` déclare son `rendererClass()`. `OrthographyTask` utilise
 `TextDiffRenderer` : un diff mot-à-mot par champ (`WordDiff`, pur PHP, sans
 lib JS), affiché en deux blocs côte à côte — « Avant » (rouge, les mots
 retirés surlignés) et « Après » (vert, les mots ajoutés surlignés), plutôt
-qu'un diff en ligne mêlant barré et souligné. Le texte comparé passe par
-`strip_tags()` **puis** `html_entity_decode()` avant tout — sans ce second
-passage, une entité déjà présente dans le HTML source (`&#039;`) ressortirait
-échappée une seconde fois par Blade (`&amp;#039;`, visible en toutes lettres
-à l'écran) au lieu du caractère qu'elle représente. Un futur `ChoiceRenderer`
+qu'un diff en ligne mêlant barré et souligné. Le texte comparé est extrait
+par `WordDiff::textOf()` : fins de bloc (`</p>`, `<br>`…) en sauts de ligne
+(sinon deux paragraphes se collent), balises retirées, **puis** entités
+décodées — sans ce décodage, une entité déjà présente dans le HTML source
+(`&#039;`) ressortirait échappée une seconde fois par Blade (`&amp;#039;`,
+visible en toutes lettres à l'écran).
+
+Le style de ces blocs est une feuille CSS propre au package
+(`resources/css/filament-prism.css`, déclarée comme asset Filament et
+publiée par `php artisan filament:assets`), pas des classes Tailwind : le
+thème d'un panel ne génère que les classes qu'il trouve dans ses propres
+sources (`@source`), et une application n'a aucune raison d'y ajouter les
+vues de ce package — des classes absentes du CSS compilé ne s'affichent
+simplement pas (c'est ce qui était arrivé : ni rouge ni vert à l'écran).
+
+> **Piège rencontré : le prompt doit garder les `/` du HTML intacts.** Sans
+> `JSON_UNESCAPED_SLASHES`, `json_encode()` écrit chaque `</p>` en `<\/p>`
+> dans le prompt ; l'IA imite ce style et renvoie de vrais antislashs, que
+> le parseur HTML ne reconnaît plus comme des balises fermantes — un élément
+> resté ouvert avale alors la suite du texte. `CorrectableField::sanitizeValues()`
+> normalise en plus ces séquences dans les champs HTML d'une réponse.
+
+Un futur `ChoiceRenderer`
 (réponse = un choix parmi plusieurs options, affiché en boutons plutôt qu'en
 diff) suivrait le même contrat sans toucher au reste du package.
 
