@@ -60,7 +60,11 @@ Chaque appel IA est persisté **dès sa réponse**, jamais tenu seulement en
 état Livewire : une coupure de session entre l'appel et le clic sur
 « Appliquer » ne perd ni le travail, ni le budget de tokens déjà dépensé.
 Rouvrir l'action retrouve l'interaction `pending` existante au lieu de
-rappeler l'IA (voir `CorrectionService::correct()`).
+rappeler l'IA — mais seulement si le texte envoyé est encore le même
+(`CorrectionService::reusablePending()`) : si le sujet a été modifié à la
+main entre-temps, cette vieille réponse ne correspond plus à rien de saisi
+— elle passe `discarded` et l'appel repart à neuf (voir
+`CorrectionService::correct()`).
 
 Colonnes notables :
 
@@ -132,7 +136,13 @@ app(CorrectionService::class)->discard($interaction);                     // sta
 
 Chaque `AiTask` déclare son `rendererClass()`. `OrthographyTask` utilise
 `TextDiffRenderer` : un diff mot-à-mot par champ (`WordDiff`, pur PHP, sans
-lib JS), texte retiré barré, texte ajouté souligné. Un futur `ChoiceRenderer`
+lib JS), affiché en deux blocs côte à côte — « Avant » (rouge, les mots
+retirés surlignés) et « Après » (vert, les mots ajoutés surlignés), plutôt
+qu'un diff en ligne mêlant barré et souligné. Le texte comparé passe par
+`strip_tags()` **puis** `html_entity_decode()` avant tout — sans ce second
+passage, une entité déjà présente dans le HTML source (`&#039;`) ressortirait
+échappée une seconde fois par Blade (`&amp;#039;`, visible en toutes lettres
+à l'écran) au lieu du caractère qu'elle représente. Un futur `ChoiceRenderer`
 (réponse = un choix parmi plusieurs options, affiché en boutons plutôt qu'en
 diff) suivrait le même contrat sans toucher au reste du package.
 

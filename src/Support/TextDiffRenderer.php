@@ -29,14 +29,14 @@ class TextDiffRenderer implements AiResultRenderer
         $fields = collect($output)
             ->keys()
             ->map(function (string $field) use ($input, $output, $labels): array {
-                $before = self::toText($input[$field] ?? '');
-                $after = self::toText($output[$field] ?? '');
+                $before = self::plainText($input[$field] ?? '');
+                $after = self::plainText($output[$field] ?? '');
 
                 return [
                     'field' => $field,
                     'label' => $labels[$field] ?? Str::headline($field),
-                    'unchanged' => strip_tags($before) === strip_tags($after),
-                    'segments' => WordDiff::compare(strip_tags($before), strip_tags($after)),
+                    'unchanged' => $before === $after,
+                    'segments' => WordDiff::compare($before, $after),
                 ];
             })
             ->values();
@@ -47,8 +47,16 @@ class TextDiffRenderer implements AiResultRenderer
         ]);
     }
 
-    private static function toText(mixed $value): string
+    /**
+     * Le texte réellement lisible d'un champ (HTML ou non) : balises retirées, puis entités décodées
+     * (`&#039;` -> `'`) — sans ça, une apostrophe encodée dans le HTML source resterait telle quelle,
+     * puis Blade (`{{ }}`, à raison, pour l'affichage) l'échapperait une seconde fois : l'entité
+     * apparaîtrait en toutes lettres à l'écran au lieu du caractère qu'elle représente.
+     */
+    private static function plainText(mixed $value): string
     {
-        return is_scalar($value) ? (string) $value : '';
+        $text = is_scalar($value) ? (string) $value : '';
+
+        return html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5);
     }
 }

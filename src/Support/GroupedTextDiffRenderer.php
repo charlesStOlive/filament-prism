@@ -19,7 +19,7 @@ use Illuminate\Support\Str;
  *
  * `CorrectionService::correctGroup()` filtre déjà chaque champ en chaîne
  * avant de persister (`CorrectableField::sanitizeValues()`) — voir la
- * docblock de `TextDiffRenderer::toText()`, même filet ici pour une
+ * docblock de `TextDiffRenderer::plainText()`, même filet ici pour une
  * interaction déjà en base avant ce filtre.
  */
 class GroupedTextDiffRenderer
@@ -38,14 +38,14 @@ class GroupedTextDiffRenderer
                     ->except(['key'])
                     ->keys()
                     ->map(function (string $field) use ($before, $item, $labels): array {
-                        $beforeText = self::toText($before[$field] ?? '');
-                        $afterText = self::toText($item[$field] ?? '');
+                        $beforeText = self::plainText($before[$field] ?? '');
+                        $afterText = self::plainText($item[$field] ?? '');
 
                         return [
                             'field' => $field,
                             'label' => $labels[$field] ?? Str::headline($field),
-                            'unchanged' => strip_tags($beforeText) === strip_tags($afterText),
-                            'segments' => WordDiff::compare(strip_tags($beforeText), strip_tags($afterText)),
+                            'unchanged' => $beforeText === $afterText,
+                            'segments' => WordDiff::compare($beforeText, $afterText),
                         ];
                     })
                     ->values();
@@ -60,8 +60,11 @@ class GroupedTextDiffRenderer
         ]);
     }
 
-    private static function toText(mixed $value): string
+    /** Voir la docblock équivalente dans `TextDiffRenderer::plainText()`. */
+    private static function plainText(mixed $value): string
     {
-        return is_scalar($value) ? (string) $value : '';
+        $text = is_scalar($value) ? (string) $value : '';
+
+        return html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5);
     }
 }

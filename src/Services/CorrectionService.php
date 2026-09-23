@@ -27,20 +27,23 @@ class CorrectionService
      * Appelle l'IA pour corriger `$subject` et persiste le résultat.
      *
      * Réutilise une interaction `pending` déjà en base pour ce
-     * `(modèle, sujet, tâche)` plutôt que de rappeler l'IA : si l'utilisateur
-     * avait fermé l'onglet sans conclure, on retrouve la réponse déjà payée
-     * au lieu de payer les tokens une seconde fois.
+     * `(modèle, sujet, tâche)` **et ce texte exact** plutôt que de rappeler
+     * l'IA : si l'utilisateur avait fermé l'onglet sans conclure, on retrouve
+     * la réponse déjà payée au lieu de payer les tokens une seconde fois. Si
+     * le texte a changé depuis (édité à la main, puis on relance la
+     * correction), cette vieille réponse ne correspond plus à rien de saisi —
+     * elle est marquée `discarded` et une interaction fraîche la remplace.
      */
     public function correct(CorrectionSubject $subject, string $taskKey = 'orthography', ?Model $trackable = null): AiInteraction
     {
         $model = $subject->model();
+        $input = $subject->extractValues();
 
-        if ($pending = $this->findPending($model, $subject->key(), $taskKey)) {
+        if ($pending = $this->reusablePending($model, $subject->key(), $taskKey, $input)) {
             return $pending;
         }
 
         $task = $this->tasks->get($taskKey);
-        $input = $subject->extractValues();
         $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toObjectSchema($subject->fields()), $input);
         $output = CorrectableField::sanitizeValues($subject->fields(), $response->structured ?? []);
 
@@ -62,12 +65,6 @@ class CorrectionService
     {
         $model = $group->model();
 
-        if ($pending = $this->findPending($model, $group->key(), $taskKey)) {
-            return $pending;
-        }
-
-        $task = $this->tasks->get($taskKey);
-
         $input = [
             'items' => collect($group->subjects())
                 ->map(fn (CorrectionSubject $subject, string $key): array => ['key' => $key, ...$subject->extractValues()])
@@ -75,6 +72,11 @@ class CorrectionService
                 ->all(),
         ];
 
+        if ($pending = $this->reusablePending($model, $group->key(), $taskKey, $input)) {
+            return $pending;
+        }
+
+        $task = $this->tasks->get($taskKey);
         $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toGroupedObjectSchema($group->fields()), $input);
 
         // Même filtre que correct() (voir CorrectableField::sanitizeValues()), item par item ; la clé
@@ -125,9 +127,17 @@ class CorrectionService
         }
     }
 
-    private function findPending(Model $model, ?string $subjectKey, string $taskKey): ?AiInteraction
+    /**
+     * L'interaction `pending` de ce (modèle, sujet, tâche), seulement si le texte qu'elle a corrigé
+     * est encore celui qu'on s'apprête à envoyer. Une interaction `pending` dont le texte a changé
+     * depuis (édité à la main entre-temps) est marquée `discarded` en passant — elle ne représente
+     * plus rien de saisi, inutile de la laisser traîner en `pending` pour autant.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    private function reusablePending(Model $model, ?string $subjectKey, string $taskKey, array $input): ?AiInteraction
     {
-        return AiInteraction::query()
+        $pending = AiInteraction::query()
             ->where('correctable_type', $model::class)
             ->where('correctable_id', $model->getKey())
             ->when(
@@ -139,6 +149,18 @@ class CorrectionService
             ->where('status', 'pending')
             ->latest('id')
             ->first();
+
+        if ($pending === null) {
+            return null;
+        }
+
+        if ($pending->input === $input) {
+            return $pending;
+        }
+
+        $pending->markDiscarded();
+
+        return null;
     }
 
     /**
