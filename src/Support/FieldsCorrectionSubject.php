@@ -21,9 +21,12 @@ use Illuminate\Database\Eloquent\Model;
  *     FieldsCorrectionSubject::make(
  *         model: $this->record,
  *         key: 'day:'.$this->dayData['node_key'],
- *         fields: [CorrectableField::make('title'), CorrectableField::make('body')->html()],
- *         get: fn (): array => Arr::only($this->dayData, ['title', 'body']),
+ *         fields: [CorrectableField::make('title')->label('Titre'), CorrectableField::make('summary')->label('Résumé')],
+ *         get: fn (): array => Arr::only($this->dayData, ['title', 'summary']),
  *     )
+ *
+ * `get` doit renvoyer le texte tel qu'il sera corrigé : pour un champ RichEditor ouvert, l'état
+ * Livewire est un document TipTap (JSON), pas du HTML — voir l'encart RichEditor du README.
  */
 class FieldsCorrectionSubject implements CorrectionSubject
 {

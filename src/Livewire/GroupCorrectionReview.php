@@ -102,7 +102,6 @@ class GroupCorrectionReview extends Component
             ->all();
 
         return view('filament-prism::livewire.group-correction-review', [
-            'interaction' => $interaction,
             'rendererView' => app(GroupedTextDiffRenderer::class)->render($interaction, $inputByKey),
         ]);
     }

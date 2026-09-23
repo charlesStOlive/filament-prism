@@ -51,10 +51,7 @@ class GroupedTextDiffRenderer
             })
             ->values();
 
-        return view('filament-prism::livewire.grouped-text-diff', [
-            'interaction' => $interaction,
-            'items' => $items,
-        ]);
+        return view('filament-prism::livewire.grouped-text-diff', ['items' => $items]);
     }
 
 }

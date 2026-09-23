@@ -118,9 +118,6 @@ class CorrectionReview extends Component
         $task = app(AiTaskRegistry::class)->get($interaction->task);
         $renderer = app($task->rendererClass());
 
-        return view('filament-prism::livewire.correction-review', [
-            'interaction' => $interaction,
-            'rendererView' => $renderer->render($interaction),
-        ]);
+        return view('filament-prism::livewire.correction-review', ['rendererView' => $renderer->render($interaction)]);
     }
 }

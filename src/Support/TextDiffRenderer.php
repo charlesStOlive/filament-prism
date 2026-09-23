@@ -37,10 +37,7 @@ class TextDiffRenderer implements AiResultRenderer
             })
             ->values();
 
-        return view('filament-prism::livewire.text-diff', [
-            'interaction' => $interaction,
-            'fields' => $fields,
-        ]);
+        return view('filament-prism::livewire.text-diff', ['fields' => $fields]);
     }
 
 }

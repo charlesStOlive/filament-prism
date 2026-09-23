@@ -3,7 +3,6 @@
 namespace CharlesStOlive\FilamentPrism\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 /**
@@ -68,16 +67,6 @@ class AiInteraction extends Model
     public function trackable(): MorphTo
     {
         return $this->morphTo();
-    }
-
-    public function parent(): BelongsTo
-    {
-        return $this->belongsTo(self::class, 'parent_interaction_id');
-    }
-
-    public function isPending(): bool
-    {
-        return $this->status === 'pending';
     }
 
     public function markApplied(): void

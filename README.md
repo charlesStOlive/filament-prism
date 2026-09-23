@@ -195,31 +195,34 @@ use CharlesStOlive\FilamentPrism\Concerns\Correctable;
 use CharlesStOlive\FilamentPrism\Support\CorrectableField;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
 
-class OrchestratorContent extends Model implements CorrectionSubject, HasMedia, Orchestratable
+class Article extends Model implements CorrectionSubject
 {
     use Correctable;
 
     public static function correctableFields(): array
     {
         return [
-            CorrectableField::make('title'),
-            CorrectableField::make('body')->html(),
+            CorrectableField::make('title')->label('Titre'),
+            CorrectableField::make('body')->label('Contenu')->html(),
         ];
     }
 }
 ```
 
-Puis, dans une page Filament :
+Puis, dans une page Filament (ex. l'édition d'un article, `$this->record`) :
 
 ```php
 use CharlesStOlive\FilamentPrism\Filament\Actions\CorrectionAction;
 
 // En popup :
-CorrectionAction::make()->correctable(fn () => $this->content)
+CorrectionAction::make()->correctable(fn () => $this->record)
 
 // En volet, si la page utilise HasSidePane (filament-orchestrator) :
-CorrectionSidePane::make('orthography', $this->content)
+CorrectionSidePane::make('orthography', $this->record)
 ```
+
+Aucun modèle de `desapp` n'utilise ce mode pour l'instant : les périodes du
+carnet passent par `FieldsCorrectionSubject` (ci-dessous).
 
 « Appliquer » écrit directement dans le modèle et le sauvegarde
 (`CorrectionService::apply()`) — `autoApply` reste à `true` (son défaut).
