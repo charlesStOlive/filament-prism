@@ -15,6 +15,11 @@ use Illuminate\Contracts\View\View;
  * `AiTask::rendererClass()` : la forme d'une réponse groupée est fixe
  * (toujours `{items: [...]}`), indépendante de la tâche — `GroupCorrectionReview`
  * l'appelle donc directement.
+ *
+ * `CorrectionService::correctGroup()` filtre déjà chaque champ en chaîne
+ * avant de persister (`CorrectableField::sanitizeValues()`) — voir la
+ * docblock de `TextDiffRenderer::toText()`, même filet ici pour une
+ * interaction déjà en base avant ce filtre.
  */
 class GroupedTextDiffRenderer
 {
@@ -30,8 +35,8 @@ class GroupedTextDiffRenderer
                     ->except(['key'])
                     ->keys()
                     ->map(function (string $field) use ($before, $item): array {
-                        $beforeText = (string) ($before[$field] ?? '');
-                        $afterText = (string) ($item[$field] ?? '');
+                        $beforeText = self::toText($before[$field] ?? '');
+                        $afterText = self::toText($item[$field] ?? '');
 
                         return [
                             'field' => $field,
@@ -49,5 +54,10 @@ class GroupedTextDiffRenderer
             'interaction' => $interaction,
             'items' => $items,
         ]);
+    }
+
+    private static function toText(mixed $value): string
+    {
+        return is_scalar($value) ? (string) $value : '';
     }
 }

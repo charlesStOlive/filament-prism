@@ -5,9 +5,9 @@ namespace CharlesStOlive\FilamentPrism\Services;
 use CharlesStOlive\FilamentPrism\Concerns\Correctable;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
+use CharlesStOlive\FilamentPrism\Support\AiProviderException;
 use CharlesStOlive\FilamentPrism\Support\CorrectableField;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
-use CharlesStOlive\FilamentPrism\Support\AiProviderException;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubjectGroup;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -42,8 +42,9 @@ class CorrectionService
         $task = $this->tasks->get($taskKey);
         $input = $subject->extractValues();
         $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toObjectSchema($subject->fields()), $input);
+        $output = CorrectableField::sanitizeValues($subject->fields(), $response->structured ?? []);
 
-        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $subject->key(), $trackable, $input, $response->structured, $response->usage);
+        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $subject->key(), $trackable, $input, $output, $response->usage);
     }
 
     /**
@@ -76,7 +77,16 @@ class CorrectionService
 
         $response = $this->callAi($task->provider(), $task->model(), $task->systemPrompt(), CorrectableField::toGroupedObjectSchema($group->fields()), $input);
 
-        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $group->key(), $trackable, $input, $response->structured, $response->usage);
+        // Même filtre que correct() (voir CorrectableField::sanitizeValues()), item par item ; la clé
+        // elle-même est repassée en chaîne — un item dont elle manque ou n'est pas exploitable est
+        // rejeté, il ne pourrait de toute façon se rattacher à aucun sujet demandé.
+        $items = collect($response->structured['items'] ?? [])
+            ->filter(fn ($item): bool => is_array($item) && is_scalar($item['key'] ?? null))
+            ->map(fn (array $item): array => ['key' => (string) $item['key'], ...CorrectableField::sanitizeValues($group->fields(), $item)])
+            ->values()
+            ->all();
+
+        return $this->persist($task->key(), $task->provider(), $task->model(), $model, $group->key(), $trackable, $input, ['items' => $items], $response->usage);
     }
 
     /**

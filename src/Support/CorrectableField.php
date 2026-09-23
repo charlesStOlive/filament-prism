@@ -117,4 +117,36 @@ class CorrectableField
             requiredFields: ['items'],
         );
     }
+
+    /**
+     * Force chaque champ déclaré à être une vraie chaîne avant de persister
+     * une réponse IA (`CorrectionService::correct()`/`correctGroup()`) : le
+     * schéma Prism (`StringSchema`) déclare bien des chaînes, mais rien ne
+     * garantit qu'un provider le respecte à la lettre (un tableau vide au
+     * lieu d'une chaîne vide, par exemple). Sans ce filtre, une valeur
+     * malformée finirait soit par planter l'affichage (`TextDiffRenderer`
+     * caste en `string`), soit — pire — par écraser un champ réel d'un
+     * tableau au clic sur « Appliquer » (voir `FieldsCorrectionSubject`,
+     * où le résultat rejoint un état Livewire sans passer par un modèle qui
+     * l'aurait retypé).
+     *
+     * Une valeur qui n'est pas un scalaire (donc pas convertible en chaîne
+     * sans avertissement) devient une chaîne vide plutôt que de remonter
+     * telle quelle — le champ apparaîtra « vidé » dans le diff, visible et
+     * sans danger tant que l'utilisateur ne l'a pas explicitement appliqué.
+     *
+     * @param  array<int, CorrectableField>  $fields
+     * @param  array<string, mixed>  $values
+     * @return array<string, string>
+     */
+    public static function sanitizeValues(array $fields, array $values): array
+    {
+        return collect($fields)
+            ->mapWithKeys(function (self $field) use ($values): array {
+                $value = $values[$field->name] ?? '';
+
+                return [$field->name => is_scalar($value) ? (string) $value : ''];
+            })
+            ->all();
+    }
 }

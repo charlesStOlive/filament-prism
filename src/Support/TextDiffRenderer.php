@@ -9,6 +9,13 @@ use Illuminate\Contracts\View\View;
  * Renderer par défaut : un diff mot-à-mot par champ corrigé, texte ajouté
  * souligné, texte retiré barré. Les champs HTML sont comparés à leur texte
  * brut (`strip_tags`) — la mise en forme n'est pas ce que corrige l'IA.
+ *
+ * `CorrectionService` filtre déjà chaque champ en chaîne avant de persister
+ * (`CorrectableField::sanitizeValues()`) : la valeur brute d'un provider peu
+ * scrupuleux (`[]` au lieu de `''`, par exemple) ne devrait donc jamais
+ * arriver ici. Le filet ci-dessous (`toText()`) reste utile pour une
+ * interaction déjà en base avant ce filtre — sans lui, `(string)` sur un
+ * tableau lève une `ErrorException` (« Array to string conversion »).
  */
 class TextDiffRenderer implements AiResultRenderer
 {
@@ -20,8 +27,8 @@ class TextDiffRenderer implements AiResultRenderer
         $fields = collect($output)
             ->keys()
             ->map(function (string $field) use ($input, $output): array {
-                $before = (string) ($input[$field] ?? '');
-                $after = (string) ($output[$field] ?? '');
+                $before = self::toText($input[$field] ?? '');
+                $after = self::toText($output[$field] ?? '');
 
                 return [
                     'field' => $field,
@@ -35,5 +42,10 @@ class TextDiffRenderer implements AiResultRenderer
             'interaction' => $interaction,
             'fields' => $fields,
         ]);
+    }
+
+    private static function toText(mixed $value): string
+    {
+        return is_scalar($value) ? (string) $value : '';
     }
 }
