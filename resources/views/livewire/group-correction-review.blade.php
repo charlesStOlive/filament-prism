@@ -1,5 +1,6 @@
 <div class="fi-fp-group-correction-review space-y-4">
-    {{ $rendererView }}
+    {{-- Non échappé à dessein : voir la même note dans correction-review.blade.php. --}}
+    {!! $rendererView !!}
 
     <div class="flex items-center justify-end gap-x-2 border-t border-gray-200 pt-4 dark:border-white/10">
         <x-filament::button color="gray" wire:click="discard">

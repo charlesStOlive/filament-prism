@@ -1,5 +1,7 @@
 <div class="fi-fp-correction-review space-y-4">
-    {{ $rendererView }}
+    {{-- Non échappé à dessein : $rendererView est une View (le diff), pas un texte brut — {{ }}
+         afficherait son HTML tel quel au lieu de le rendre (voir TextDiffRenderer/text-diff.blade.php). --}}
+    {!! $rendererView !!}
 
     <div class="flex items-center justify-end gap-x-2 border-t border-gray-200 pt-4 dark:border-white/10">
         <x-filament::button color="gray" wire:click="discard">
