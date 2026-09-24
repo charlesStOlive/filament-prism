@@ -217,7 +217,7 @@ use CharlesStOlive\FilamentPrism\Filament\Actions\CorrectionAction;
 // En popup :
 CorrectionAction::make()->correctable(fn () => $this->record)
 
-// En volet, si la page utilise HasSidePane (filament-orchestrator) :
+// En volet, si la page utilise HasSidePane (filament-ui) :
 CorrectionSidePane::make('orthography', $this->record)
 ```
 

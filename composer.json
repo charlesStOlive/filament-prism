@@ -16,7 +16,7 @@
         "spatie/laravel-package-tools": "^1.16"
     },
     "suggest": {
-        "charlesstolive/filament-orchestrator": "Adds CorrectionSidePane, the side-pane variant of CorrectionAction"
+        "charlesstolive/filament-ui": "Adds CorrectionSidePane, the side-pane variant of CorrectionAction"
     },
     "autoload": {
         "psr-4": {
