@@ -85,10 +85,10 @@ class AiInteractionResource extends Resource
                     ->color(fn (string $state): string => AiInteraction::statusColor($state)),
                 TextColumn::make('user.name')->label('Par')->visible(fn (): bool => AiAccess::canSeeAll()),
                 TextColumn::make('total_tokens')->label('Tokens')->numeric()->sortable(),
-                TextColumn::make('cost')
-                    ->label('Coût')
-                    ->numeric(3)
-                    ->suffix(' '.config('filament-prism.currency'))
+                TextColumn::make('model')->label('Modèle')->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('cost_eur')
+                    ->label('Coût estimé')
+                    ->formatStateUsing(fn (?string $state): ?string => $state === null ? null : number_format((float) $state, 3, ',', ' ').' €')
                     ->placeholder('—')
                     ->sortable(),
                 TextColumn::make('duration')

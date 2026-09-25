@@ -26,7 +26,7 @@ class AiUsageByUser extends TableWidget
 
     public function table(Table $table): Table
     {
-        $currency = ' '.config('filament-prism.currency');
+        $euros = fn (?float $amount): ?string => $amount === null ? null : number_format($amount, 2, ',', ' ').' €';
 
         return $table
             ->heading('Par utilisateur')
@@ -39,10 +39,14 @@ class AiUsageByUser extends TableWidget
                 TextColumn::make('prompt_tokens')->label('Tokens envoyés')->numeric(),
                 TextColumn::make('completion_tokens')->label('Tokens reçus')->numeric(),
                 TextColumn::make('total_tokens')->label('Tokens')->numeric()->weight('medium'),
-                TextColumn::make('cost')
-                    ->label('Coût')
-                    ->formatStateUsing(fn (?float $state, array $record): ?string => $state === null ? null
-                        : number_format($state, 2, ',', ' ').$currency.($record['cost_is_partial'] ? ' (partiel)' : ''))
+                TextColumn::make('cost_eur')
+                    ->label('Coût estimé')
+                    ->formatStateUsing(fn (?float $state, array $record): ?string => $state === null ? null : $euros($state).($record['cost_is_partial'] ? ' (partiel)' : ''))
+                    ->placeholder('—'),
+                TextColumn::make('billed_eur')
+                    ->label('Part de la facture')
+                    ->tooltip('L’estimation recalée sur ce que le fournisseur a réellement facturé sur la période.')
+                    ->formatStateUsing(fn (?float $state): ?string => $euros($state))
                     ->placeholder('—'),
             ]);
     }

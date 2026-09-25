@@ -28,6 +28,7 @@ et grammaticale** (`orthography`) ; une application déclare les siennes
   - [Qui voit quoi (`AiAccess`)](#qui-voit-quoi-aiaccess)
   - [Afficher les demandes : modale, slide-over, volet](#afficher-les-demandes--modale-slide-over-volet)
   - [L'affichage d'une demande : piloté par la ressource](#laffichage-dune-demande--piloté-par-la-ressource)
+- [Coûts en euros et facture réelle des fournisseurs](#coûts-en-euros-et-facture-réelle-des-fournisseurs)
 - [Widgets de consommation](#widgets-de-consommation)
 - [Mise à jour](#mise-à-jour)
 - [Roadmap (hors périmètre v1)](#roadmap-hors-périmètre-v1)
@@ -494,12 +495,11 @@ montre que le formulaire d'entrée et se ferme à l'envoi
   dates) ; une demande s'ouvre sur son fil — ses variantes, chacune avec son
   résultat et ses boutons (« Accepter », « Ignorer », « Refaire », « Relancer »).
 - **Consommation IA** (`AiUsageStats`) : sa propre consommation (tokens du
-  jour, du mois, coût du mois), puis, par ressource sur une période, le nombre
-  de demandes, d'échecs, le taux d'acceptation (acceptées / vérifiées), les
-  tokens, le coût et la durée moyenne ; les demandes dans le temps. Le coût
-  n'est connu que pour les modèles de `filament-prism.pricing` (prix pour un
-  million de tokens, `input_image` à part pour les photos jointes) — une somme
-  partielle est signalée.
+  jour, du mois, coût du mois), ce que les fournisseurs ont facturé, puis, par
+  ressource, par utilisateur et par modèle sur une période : demandes, échecs,
+  taux d'acceptation (acceptées / vérifiées), tokens, coût estimé et part de
+  la facture en euros, durée moyenne ; les demandes dans le temps (voir
+  « Coûts en euros » plus bas).
 
 ### Qui voit quoi (`AiAccess`)
 
@@ -575,12 +575,56 @@ produites (`output.images`) en `ImageEntry`, qui s'ouvrent en grand ; les
 réglages, ceux de `describeInput()` en grille. La correction orthographique
 déclare le sien : le diff « Avant / Après » de sa revue.
 
+## Coûts en euros et facture réelle des fournisseurs
+
+Les tokens ne parlent pas toujours : chaque demande porte aussi un **coût
+estimé** (tokens × prix du catalogue), dans la devise du fournisseur (`cost`,
+`currency`) et **en euros** (`cost_eur`, au taux de référence BCE du jour), et
+le type de modèle appelé (`kind` : `text`, `structured`, `image`).
+
+Le catalogue décrit fournisseurs et modèles (`filament-prism.providers`) :
+libellé, devise, source de facturation, et par modèle son type et ses prix
+pour un million de tokens (`input`, `output`, `input_image`). Un modèle absent
+a un coût **inconnu**, pas nul — « Par modèle » le signale. L'ancienne table
+`filament-prism.pricing` (par modèle seul) reste lue en repli.
+
+Ce que le fournisseur a **réellement facturé** se relève dans son API de
+facturation (`BillingSource`), jour par jour et ligne par ligne, dans
+`ai_billed_costs` :
+
+| Fournisseur | API | Clé | Restreindre à l'application |
+|---|---|---|---|
+| OpenAI (`OpenAiBilling`) | `GET /v1/organization/costs` | `OPENAI_ADMIN_KEY` — clé **admin** d'organisation, pas la clé de projet (`sk-proj-…`) des appels | `OPENAI_PROJECT_ID` |
+| Anthropic (`AnthropicBilling`) | `GET /v1/organizations/cost_report` (montants en cents) | `ANTHROPIC_ADMIN_KEY` (`sk-ant-admin…`) | `ANTHROPIC_WORKSPACE_ID` |
+
+```bash
+php artisan filament-prism:sync-billing --days=7   # taux BCE + factures + coûts manquants
+```
+
+```php
+// routes/console.php de l'application
+Schedule::command('filament-prism:sync-billing')->dailyAt('06:00');
+```
+
+Le relevé est idempotent (un jour relevé deux fois est remplacé), convertit
+chaque ligne au taux BCE de son jour (dernier publié, un week-end), et complète
+les demandes sans coût (modèle sans prix à l'époque de l'appel : calculé
+d'après leurs tokens) ou sans euros. « Relever la facture », sur la page de
+stats, fait de même tout de suite.
+
+La facture ne connaît ni les ressources ni les utilisateurs : la **part de la
+facture** de chacun est son estimation **recalée** — multipliée, fournisseur
+par fournisseur, par le rapport facturé / estimé de la période. Sans projet
+précisé, la facture couvre toute l'organisation (autres applications
+comprises) : le rapport le montre.
+
 ## Widgets de consommation
 
 - `AiTokenUsageOverview` — la consommation de l'utilisateur courant : tokens
   aujourd'hui / ce mois, coût du mois (`StatsOverviewWidget`).
-- `AiUsageByResource`, `AiUsageByUser` (qui peut tout voir seulement),
-  `AiUsageChart` — ceux de « Consommation IA », qui lisent ses filtres.
+- `AiBillingByProvider` (qui peut tout voir seulement), `AiUsageByResource`,
+  `AiUsageByUser` (idem), `AiUsageByModel`, `AiUsageChart` — ceux de
+  « Consommation IA », qui lisent ses filtres.
 - `AiTokenUsageByTrackable` — historique des interactions d'un `trackable`
   donné (`AiTokenUsageByTrackable::make(['trackable' => $voyage])`), pour un
   futur « tokens de ce voyage » sur sa propre page.
@@ -589,8 +633,12 @@ déclare le sien : le diff « Avant / Après » de sa revue.
 
 Une application qui utilise déjà le package republie ses migrations et migre :
 `add_run_tracking_to_ai_interactions_table` ajoute `started_at`,
-`finished_at`, `error` et `cost` — `AiRunner` les écrit à chaque appel, **même
-synchrone** : sans cette migration, tout appel échoue.
+`finished_at`, `error` et `cost` ; `add_billing_to_ai_interactions_table`
+ajoute `kind`, `currency`, `cost_eur` et les tables `ai_billed_costs`,
+`ai_exchange_rates`. `AiRunner` écrit ces colonnes à chaque appel, **même
+synchrone** : sans ces migrations, tout appel échoue. La config passe de
+`pricing` à `providers` (l'ancienne clé reste lue en repli) : republier ou
+reporter le catalogue dans `config/filament-prism.php`.
 
 ```bash
 sail artisan vendor:publish --tag=filament-prism-migrations

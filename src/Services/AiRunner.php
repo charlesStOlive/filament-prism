@@ -8,6 +8,8 @@ use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Resources\AiResource;
 use CharlesStOlive\FilamentPrism\Support\AiCost;
 use CharlesStOlive\FilamentPrism\Support\AiProviderException;
+use CharlesStOlive\FilamentPrism\Support\AiProviders;
+use CharlesStOlive\FilamentPrism\Support\ExchangeRates;
 use Filament\Facades\Filament;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -140,13 +142,20 @@ class AiRunner
             $meta['usage'] = $details;
         }
 
+        $cost = AiCost::of($interaction->provider, $interaction->model, $usage->promptTokens, $usage->completionTokens, (array) ($details['input_tokens_details'] ?? []));
+        $currency = AiProviders::currency($interaction->provider);
+
         $interaction->forceFill([
+            'kind' => $resource->generatesImages() ? 'image' : ($resource->responseSchema($input, $context) === null ? 'text' : 'structured'),
             'output' => $output,
             'meta' => $meta === [] ? null : $meta,
             'prompt_tokens' => $usage->promptTokens,
             'completion_tokens' => $usage->completionTokens,
             'total_tokens' => $usage->promptTokens + $usage->completionTokens,
-            'cost' => AiCost::of($interaction->model, $usage->promptTokens, $usage->completionTokens, (array) ($details['input_tokens_details'] ?? [])),
+            'cost' => $cost,
+            'currency' => $cost === null ? null : $currency,
+            // Au dernier taux BCE connu ; complété plus tard si aucun ne l'est encore (voir AiBillingSync).
+            'cost_eur' => $cost === null ? null : app(ExchangeRates::class)->toEur($cost, $currency, now()),
             'status' => AiInteraction::STATUS_PENDING,
             'error' => null,
             'finished_at' => now(),

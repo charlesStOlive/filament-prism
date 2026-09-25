@@ -41,17 +41,49 @@ return [
     'notify' => env('FILAMENT_PRISM_NOTIFY', true),
 
     /*
-     * Prix pour un million de tokens, par modèle, dans une même devise
-     * (`currency`) : `input`, `output`, et pour un modèle d'image `input_image`
-     * (les photos jointes, comptées à part quand le provider en donne le
-     * détail). Un modèle absent n'a pas de coût : les stats le disent inconnu.
-     * Tarifs à reprendre de la page de prix du provider.
+     * Les fournisseurs d'IA et leurs modèles.
+     *
+     * - `currency` : la devise des prix et de la facture du fournisseur ; tout
+     *   est converti en euros au taux de référence BCE du jour (voir
+     *   `filament-prism:sync-billing`).
+     * - `billing` : où lire ce que le fournisseur a réellement facturé. Il faut
+     *   une clé **admin** (pas la clé d'API des appels) ; le projet / workspace
+     *   restreint la facture à cette application — sans lui, c'est celle de
+     *   toute l'organisation.
+     * - `models` : pour chaque modèle, son `type` (text, image...) et ses prix
+     *   pour un million de tokens — `input`, `output`, et pour un modèle
+     *   d'image `input_image` (les photos jointes, comptées à part). Un modèle
+     *   absent a un coût inconnu, pas nul. Prix du tarif standard, à tenir à
+     *   jour depuis la page de prix du fournisseur (relevés le 25/09/2026).
      */
-    'currency' => env('FILAMENT_PRISM_CURRENCY', 'USD'),
-
-    'pricing' => [
-        // 'gpt-image-1' => ['input' => <prix>, 'input_image' => <prix>, 'output' => <prix>],
-        // 'gpt-5.4-nano' => ['input' => <prix>, 'output' => <prix>],
+    'providers' => [
+        'openai' => [
+            'label' => 'OpenAI',
+            'currency' => 'USD',
+            'billing' => [
+                'source' => \CharlesStOlive\FilamentPrism\Billing\OpenAiBilling::class,
+                'admin_key' => env('OPENAI_ADMIN_KEY'),
+                'project_id' => env('OPENAI_PROJECT_ID'),
+            ],
+            'models' => [
+                'gpt-5.4' => ['type' => 'text', 'input' => 2.50, 'output' => 15.00],
+                'gpt-5.4-mini' => ['type' => 'text', 'input' => 0.75, 'output' => 4.50],
+                'gpt-5.4-nano' => ['type' => 'text', 'input' => 0.20, 'output' => 1.25],
+                'gpt-image-1' => ['type' => 'image', 'input' => 5.00, 'input_image' => 10.00, 'output' => 40.00],
+                'gpt-image-1-mini' => ['type' => 'image', 'input' => 2.00, 'input_image' => 2.50, 'output' => 8.00],
+                'gpt-image-1.5' => ['type' => 'image', 'input' => 5.00, 'input_image' => 8.00, 'output' => 32.00],
+            ],
+        ],
+        'anthropic' => [
+            'label' => 'Anthropic',
+            'currency' => 'USD',
+            'billing' => [
+                'source' => \CharlesStOlive\FilamentPrism\Billing\AnthropicBilling::class,
+                'admin_key' => env('ANTHROPIC_ADMIN_KEY'),
+                'workspace_id' => env('ANTHROPIC_WORKSPACE_ID'),
+            ],
+            'models' => [],
+        ],
     ],
 
     /*

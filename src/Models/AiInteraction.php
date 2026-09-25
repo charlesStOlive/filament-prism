@@ -74,6 +74,9 @@ class AiInteraction extends Model
         'completion_tokens',
         'total_tokens',
         'cost',
+        'currency',
+        'cost_eur',
+        'kind',
         'status',
         'started_at',
         'finished_at',
@@ -91,6 +94,7 @@ class AiInteraction extends Model
         'started_at' => 'datetime',
         'finished_at' => 'datetime',
         'cost' => 'decimal:6',
+        'cost_eur' => 'decimal:6',
     ];
 
     public function correctable(): MorphTo

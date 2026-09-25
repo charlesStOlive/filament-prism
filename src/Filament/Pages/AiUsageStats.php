@@ -2,7 +2,10 @@
 
 namespace CharlesStOlive\FilamentPrism\Filament\Pages;
 
+use CharlesStOlive\FilamentPrism\Billing\AiBillingSync;
+use CharlesStOlive\FilamentPrism\Filament\Widgets\AiBillingByProvider;
 use CharlesStOlive\FilamentPrism\Filament\Widgets\AiTokenUsageOverview;
+use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageByModel;
 use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageByResource;
 use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageByUser;
 use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageChart;
@@ -10,7 +13,9 @@ use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Support\AiAccess;
 use CharlesStOlive\FilamentPrism\Support\AiUsage;
+use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
+use Filament\Notifications\Notification;
 use Filament\Pages\Dashboard\Concerns\HasFiltersForm;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\EmbeddedSchema;
@@ -43,6 +48,30 @@ class AiUsageStats extends Page
         return filament()->hasPlugin(FilamentPrismPlugin::ID) ? FilamentPrismPlugin::get()->getNavigationGroup() : null;
     }
 
+    /** Relever tout de suite la facture des fournisseurs (sinon : chaque jour, par le scheduler). */
+    protected function getHeaderActions(): array
+    {
+        return [
+            Action::make('syncBilling')
+                ->label('Relever la facture')
+                ->icon('heroicon-o-arrow-path')
+                ->color('gray')
+                ->visible(fn (): bool => AiAccess::canSeeAll())
+                ->action(function (): void {
+                    $result = app(AiBillingSync::class)->sync(31);
+                    $lines = collect($result['providers'])->map(fn (int|string $outcome, string $provider): string => $provider.' : '.(is_int($outcome) ? "{$outcome} ligne(s)" : $outcome));
+
+                    Notification::make()
+                        ->title($result['providers'] === [] ? 'Aucune facture à relever' : 'Facture relevée')
+                        ->body($result['providers'] === []
+                            ? 'Il faut une clé admin de facturation (ex. OPENAI_ADMIN_KEY). Les taux BCE ont été relevés.'
+                            : $lines->implode("\n"))
+                        ->status($result['providers'] === [] ? 'warning' : 'success')
+                        ->send();
+                }),
+        ];
+    }
+
     public function filtersForm(Schema $schema): Schema
     {
         return $schema->components([
@@ -71,8 +100,10 @@ class AiUsageStats extends Page
             EmbeddedSchema::make('filtersForm'),
             Grid::make(1)->schema(fn (): array => $this->getWidgetsSchemaComponents([
                 AiTokenUsageOverview::class,
+                AiBillingByProvider::class,
                 AiUsageByResource::class,
                 AiUsageByUser::class,
+                AiUsageByModel::class,
                 AiUsageChart::class,
             ])),
         ]);
