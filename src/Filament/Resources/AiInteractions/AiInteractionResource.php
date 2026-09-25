@@ -8,6 +8,7 @@ use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Support\AiAccess;
+use CharlesStOlive\FilamentPrism\Support\AiMoney;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
@@ -88,7 +89,7 @@ class AiInteractionResource extends Resource
                 TextColumn::make('model')->label('Modèle')->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('cost_eur')
                     ->label('Coût estimé')
-                    ->formatStateUsing(fn (?string $state): ?string => $state === null ? null : number_format((float) $state, 3, ',', ' ').' €')
+                    ->formatStateUsing(fn (?string $state): ?string => $state === null ? null : AiMoney::format((float) $state))
                     ->placeholder('—')
                     ->sortable(),
                 TextColumn::make('duration')

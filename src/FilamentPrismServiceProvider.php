@@ -25,6 +25,7 @@ class FilamentPrismServiceProvider extends PackageServiceProvider
                 'add_subject_key_to_ai_interactions_table',
                 'add_run_tracking_to_ai_interactions_table',
                 'add_billing_to_ai_interactions_table',
+                'increase_ai_cost_precision',
             ]);
     }
 

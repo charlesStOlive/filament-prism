@@ -582,6 +582,11 @@ estimé** (tokens × prix du catalogue), dans la devise du fournisseur (`cost`,
 `currency`) et **en euros** (`cost_eur`, au taux de référence BCE du jour), et
 le type de modèle appelé (`kind` : `text`, `structured`, `image`).
 
+Une requête coûte souvent une fraction de centime : les coûts sont stockés
+avec **8 décimales**, et affichés par `AiMoney::format()` avec trois chiffres
+significatifs sous 1 (0,000297 € ; 0,0938 €), deux décimales au-delà
+(12,40 €) — jamais « 0,00 € » pour une petite correction.
+
 Le catalogue décrit fournisseurs et modèles (`filament-prism.providers`) :
 libellé, devise, source de facturation, et par modèle son type et ses prix
 pour un million de tokens (`input`, `output`, `input_image`). Un modèle absent
@@ -635,7 +640,8 @@ Une application qui utilise déjà le package republie ses migrations et migre :
 `add_run_tracking_to_ai_interactions_table` ajoute `started_at`,
 `finished_at`, `error` et `cost` ; `add_billing_to_ai_interactions_table`
 ajoute `kind`, `currency`, `cost_eur` et les tables `ai_billed_costs`,
-`ai_exchange_rates`. `AiRunner` écrit ces colonnes à chaque appel, **même
+`ai_exchange_rates` ; `increase_ai_cost_precision` passe les coûts à 8
+décimales. `AiRunner` écrit ces colonnes à chaque appel, **même
 synchrone** : sans ces migrations, tout appel échoue. La config passe de
 `pricing` à `providers` (l'ancienne clé reste lue en repli) : republier ou
 reporter le catalogue dans `config/filament-prism.php`.

@@ -57,7 +57,7 @@ class ExchangeRates
 
         $rate = $this->rate($currency, $date);
 
-        return $rate === null ? null : round($amount / $rate, 6);
+        return $rate === null ? null : round($amount / $rate, AiMoney::PRECISION);
     }
 
     /** 1 EUR = ? dans la devise, le jour dit ou le dernier publié avant (à défaut, le premier connu après). */

@@ -3,6 +3,7 @@
 namespace CharlesStOlive\FilamentPrism\Filament\Widgets;
 
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
+use CharlesStOlive\FilamentPrism\Support\AiMoney;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Facades\Auth;
@@ -29,7 +30,7 @@ class AiTokenUsageOverview extends StatsOverviewWidget
         return [
             Stat::make('Tokens aujourd’hui', number_format((int) $today, 0, ',', ' ')),
             Stat::make('Tokens ce mois', number_format((int) $thisMonth, 0, ',', ' ')),
-            Stat::make('Coût estimé ce mois', $cost > 0 ? number_format((float) $cost, 2, ',', ' ').' €' : '—'),
+            Stat::make('Coût estimé ce mois', $cost > 0 ? AiMoney::format((float) $cost) : '—'),
         ];
     }
 }

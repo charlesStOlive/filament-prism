@@ -16,7 +16,7 @@ class AiBilledCost extends Model
 
     protected $casts = [
         'date' => 'date',
-        'amount' => 'decimal:6',
-        'amount_eur' => 'decimal:6',
+        'amount' => 'decimal:8',
+        'amount_eur' => 'decimal:8',
     ];
 }

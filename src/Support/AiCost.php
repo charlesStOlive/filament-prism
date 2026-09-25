@@ -35,6 +35,6 @@ final class AiCost
             + $imageTokens * (float) ($prices['input_image'] ?? 0)
             + $completionTokens * (float) $prices['output'];
 
-        return round($cost / 1_000_000, 6);
+        return round($cost / 1_000_000, AiMoney::PRECISION);
     }
 }

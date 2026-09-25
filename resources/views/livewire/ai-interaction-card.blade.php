@@ -25,9 +25,9 @@
                     <span>· {{ number_format($interaction->total_tokens, 0, ',', ' ') }} tokens</span>
                 @endif
                 @if ($interaction->cost_eur !== null)
-                    <span title="Coût estimé : tokens × prix du catalogue">· ≈ {{ number_format((float) $interaction->cost_eur, 3, ',', ' ') }} €</span>
+                    <span title="Coût estimé : tokens × prix du catalogue">· ≈ {{ \CharlesStOlive\FilamentPrism\Support\AiMoney::format((float) $interaction->cost_eur) }}</span>
                 @elseif ($interaction->cost !== null)
-                    <span title="Coût estimé : tokens × prix du catalogue">· ≈ {{ number_format((float) $interaction->cost, 3, ',', ' ') }} {{ $interaction->currency }}</span>
+                    <span title="Coût estimé : tokens × prix du catalogue">· ≈ {{ \CharlesStOlive\FilamentPrism\Support\AiMoney::format((float) $interaction->cost, (string) $interaction->currency) }}</span>
                 @endif
                 @if ($url = $this->threadUrl())
                     <a href="{{ $url }}" class="fp-link">Voir le fil</a>

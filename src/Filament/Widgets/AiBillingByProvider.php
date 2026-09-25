@@ -4,6 +4,7 @@ namespace CharlesStOlive\FilamentPrism\Filament\Widgets;
 
 use CharlesStOlive\FilamentPrism\Billing\AiBillingSync;
 use CharlesStOlive\FilamentPrism\Support\AiAccess;
+use CharlesStOlive\FilamentPrism\Support\AiMoney;
 use CharlesStOlive\FilamentPrism\Support\AiUsage;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -29,7 +30,7 @@ class AiBillingByProvider extends TableWidget
 
     public function table(Table $table): Table
     {
-        $euros = fn (?float $amount): ?string => $amount === null ? null : number_format($amount, 2, ',', ' ').' €';
+        $euros = fn (?float $amount): ?string => AiMoney::format($amount);
         $configured = app(AiBillingSync::class)->configuredProviders();
 
         return $table
@@ -44,7 +45,7 @@ class AiBillingByProvider extends TableWidget
                 TextColumn::make('billed_eur')->label('Facturé')->formatStateUsing(fn (?float $state): ?string => $euros($state))->placeholder('—')->weight('medium'),
                 TextColumn::make('billed')
                     ->label('Facturé (devise)')
-                    ->formatStateUsing(fn (?float $state, array $record): ?string => $state === null ? null : number_format($state, 2, ',', ' ').' '.$record['currency'])
+                    ->formatStateUsing(fn (?float $state, array $record): ?string => AiMoney::format($state, $record['currency']))
                     ->placeholder('—'),
                 TextColumn::make('estimated_eur')->label('Estimé par l’application')->formatStateUsing(fn (?float $state): ?string => $euros($state))->placeholder('—'),
                 TextColumn::make('ratio')

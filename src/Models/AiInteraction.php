@@ -93,8 +93,8 @@ class AiInteraction extends Model
         'applied_at' => 'datetime',
         'started_at' => 'datetime',
         'finished_at' => 'datetime',
-        'cost' => 'decimal:6',
-        'cost_eur' => 'decimal:6',
+        'cost' => 'decimal:8',
+        'cost_eur' => 'decimal:8',
     ];
 
     public function correctable(): MorphTo

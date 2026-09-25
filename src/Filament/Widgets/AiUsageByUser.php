@@ -3,6 +3,7 @@
 namespace CharlesStOlive\FilamentPrism\Filament\Widgets;
 
 use CharlesStOlive\FilamentPrism\Support\AiAccess;
+use CharlesStOlive\FilamentPrism\Support\AiMoney;
 use CharlesStOlive\FilamentPrism\Support\AiUsage;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
@@ -26,7 +27,7 @@ class AiUsageByUser extends TableWidget
 
     public function table(Table $table): Table
     {
-        $euros = fn (?float $amount): ?string => $amount === null ? null : number_format($amount, 2, ',', ' ').' €';
+        $euros = fn (?float $amount): ?string => AiMoney::format($amount);
 
         return $table
             ->heading('Par utilisateur')
