@@ -2,13 +2,21 @@
 
 namespace CharlesStOlive\FilamentPrism\Tasks;
 
-use CharlesStOlive\FilamentPrism\Support\TextDiffRenderer;
+use CharlesStOlive\FilamentPrism\Resources\AiResource;
+use CharlesStOlive\FilamentPrism\Support\CorrectableField;
+use Prism\Prism\Schema\ObjectSchema;
 
 /**
- * Tâche par défaut : corrige l'orthographe et la grammaire des champs
+ * Ressource par défaut : corrige l'orthographe et la grammaire des champs
  * déclarés `correctable` sur un modèle, sans changer le sens ni le ton.
+ *
+ * Pas de formulaire d'entrée : le texte vient du `CorrectionSubject` passé
+ * par `CorrectionService`, avec ses champs dans le contexte
+ * (`context['fields']`, et `context['grouped']` pour plusieurs sujets en un
+ * appel). La réception est la revue de correction (`CorrectionReview`), pas
+ * un formulaire : ni `receptionSchema()` ni `apply()`.
  */
-class OrthographyTask implements AiTask
+class OrthographyTask extends AiResource
 {
     public function key(): string
     {
@@ -34,18 +42,44 @@ class OrthographyTask implements AiTask
             PROMPT;
     }
 
-    public function provider(): string
+    public function label(): string
     {
-        return (string) config('filament-prism.provider');
+        return 'Orthographe';
     }
 
-    public function model(): string
+    /**
+     * @param  array<string, mixed>  $input
+     * @param  array{fields: array<int, CorrectableField>, grouped?: bool}  $context
+     */
+    public function responseSchema(array $input, array $context): ObjectSchema
     {
-        return (string) config('filament-prism.model');
+        return ($context['grouped'] ?? false)
+            ? CorrectableField::toGroupedObjectSchema($context['fields'])
+            : CorrectableField::toObjectSchema($context['fields']);
     }
 
-    public function rendererClass(): string
+    /**
+     * Force chaque champ à être une vraie chaîne (voir `CorrectableField::sanitizeValues()`) ; en
+     * groupe, item par item, la clé repassée en chaîne — un item dont elle manque ou n'est pas
+     * exploitable est rejeté, il ne pourrait de toute façon se rattacher à aucun sujet demandé.
+     *
+     * @param  array<string, mixed>  $output
+     * @param  array<string, mixed>  $input
+     * @param  array{fields: array<int, CorrectableField>, grouped?: bool}  $context
+     * @return array<string, mixed>
+     */
+    public function resolve(array $output, array $input, array $context): array
     {
-        return TextDiffRenderer::class;
+        if (! ($context['grouped'] ?? false)) {
+            return CorrectableField::sanitizeValues($context['fields'], $output);
+        }
+
+        return [
+            'items' => collect($output['items'] ?? [])
+                ->filter(fn ($item): bool => is_array($item) && is_scalar($item['key'] ?? null))
+                ->map(fn (array $item): array => ['key' => (string) $item['key'], ...CorrectableField::sanitizeValues($context['fields'], $item)])
+                ->values()
+                ->all(),
+        ];
     }
 }

@@ -3,16 +3,18 @@
 Registre de services IA (basés sur [`prism-php/prism`](https://prismphp.com))
 pour Filament, avec persistance durable de chaque appel et suivi des tokens.
 
-Le premier service livré est la **correction orthographique et grammaticale**
-(tâche `orthography`) : d'autres tâches (traduction, reformulation, ...)
-s'ajoutent sans toucher au cœur du package.
+Chaque usage de l'IA est une **ressource IA** (`AiResource`) : son formulaire
+d'entrée, son prompt, la forme de sa réponse, son traitement après l'appel et
+sa réception, au même endroit. Le package livre la **correction orthographique
+et grammaticale** (`orthography`) ; une application déclare les siennes
+(extraction de factures, traduction...) sans toucher au cœur du package.
 
 ## Sommaire
 
 - [Installation](#installation)
 - [Concepts](#concepts)
   - [AiInteraction — la durabilité](#aiinteraction--la-durabilité)
-  - [AiTask / AiTaskRegistry — le registre de tâches](#aitask--aitaskregistry--le-registre-de-tâches)
+  - [AiResource — une ressource IA](#airesource--une-ressource-ia)
   - [CorrectionSubject — quoi corriger](#correctionsubject--quoi-corriger)
   - [CorrectionService — appeler l'IA et appliquer le résultat](#correctionservice--appeler-lia-et-appliquer-le-résultat)
   - [AiResultRenderer — comment afficher le résultat](#airesultrenderer--comment-afficher-le-résultat)
@@ -20,6 +22,7 @@ s'ajoutent sans toucher au cœur du package.
 - [Utilisation : un modèle Eloquent (`Correctable`)](#utilisation--un-modèle-eloquent-correctable)
 - [Utilisation : un texte hors modèle (`FieldsCorrectionSubject`)](#utilisation--un-texte-hors-modèle-fieldscorrectionsubject)
 - [Utilisation : plusieurs sujets en un seul appel (`CorrectionSubjectGroup`)](#utilisation--plusieurs-sujets-en-un-seul-appel-correctionsubjectgroup)
+- [Utilisation : une ressource avec formulaire et réception (`AiResourceAction`)](#utilisation--une-ressource-avec-formulaire-et-réception-airesourceaction)
 - [Widgets de consommation](#widgets-de-consommation)
 - [Roadmap (hors périmètre v1)](#roadmap-hors-périmètre-v1)
 
@@ -78,18 +81,42 @@ Colonnes notables :
 | `thread_id`/`parent_interaction_id` | Posées maintenant, inutilisées en v1 (chaque interaction est un fil à elle seule) : Prism sait déjà rejouer un historique de messages (`withMessages()`), elles éviteront un `ALTER TABLE` le jour où un vrai dialogue multi-tours existera. |
 | `meta` (json) | Ce dont un renderer a besoin sans connaître le `CorrectionSubject` d'origine (il ne survit pas à la requête qui a appelé l'IA) : `meta.labels` porte le libellé de chaque champ (`CorrectableField::labelsByName()`), utilisé par `TextDiffRenderer`/`GroupedTextDiffRenderer` — sans ça, `CorrectableField::make('body')->label('Contenu')` n'aurait aucun effet visible, la vue régénérant un libellé générique (`Str::headline($field)`) faute d'accès à la déclaration d'origine. Un futur `ChoiceRenderer` y noterait par exemple l'option choisie. |
 
-### `AiTask` / `AiTaskRegistry` — le registre de tâches
+### `AiResource` — une ressource IA
 
-Une tâche = une classe qui implémente `AiTask` (clé, prompt système,
-provider/modèle par défaut, classe de renderer), listée dans
-`config('filament-prism.tasks')`. `OrthographyTask` est la seule fournie ;
-en ajouter une nouvelle ne touche pas au cœur du package :
+Une ressource = une classe qui étend `AiResource`, listée dans
+`config('filament-prism.tasks')` et retrouvée par sa `key()`
+(`AiTaskRegistry::resource()`). Chaque étape a une méthode, avec un défaut
+raisonnable — une ressource ne redéfinit que ce qui la concerne :
+
+| Étape | Méthode | Rôle |
+|---|---|---|
+| Avant | `inputSchema()` | Formulaire Filament à remplir avant l'appel (un fichier, un sélecteur...). `null` : aucun, le code appelant fournit tout (la correction). |
+| Avant | `handleInput($data)` | Ce formulaire vers un ou plusieurs appels ; renvoie l'état initial de la réception. |
+| Avant | `context($input)` | Ce que la ressource va chercher elle-même (une requête en base...) pour nourrir prompt et schéma. Jamais persisté. |
+| Appel | `systemPrompt()` | Le rôle et les règles, fixes. |
+| Appel | `prompt($input, $context)` | Le message, construit à partir des données. Défaut : l'entrée en JSON. |
+| Appel | `attachments()` | Documents/images joints (`Document::fromLocalPath()`...). |
+| Appel | `responseSchema()` | La forme du retour : un schéma Prism (JSON structuré), ou `null` pour du texte libre (`output = ['text' => ...]`). |
+| Appel | `tools()` / `maxSteps()` | Les fonctions que l'IA peut appeler pendant l'appel. |
+| Appel | `configureRequest($request)` | Le reste : température, options du provider... |
+| Après | `resolve($output, $input, $context)` | Normalise et complète la réponse en PHP (dates, rapprochement en base, avertissements). C'est ce résultat qui est persisté dans `output` ; la réponse brute reste dans `meta.raw`. |
+| Après | `receptionSchema()` | Le formulaire de vérification du résultat. |
+| Après | `apply($data)` | La soumission de cette vérification. |
+
+`provider()`/`model()` reprennent la config par défaut ; une ressource peut
+les redéfinir. `AiRunner::run()` porte le cycle commun : réutiliser une
+réponse `pending` déjà payée pour la même entrée, sinon appeler l'IA,
+`resolve()`, persister.
+
+`OrthographyTask` est une ressource sans formulaire d'entrée ni réception de
+formulaire : son texte vient d'un `CorrectionSubject`, sa réception est la
+revue de correction (`CorrectionReview`, voir `AiResultRenderer`).
 
 ```php
 // config/filament-prism.php
 'tasks' => [
     \CharlesStOlive\FilamentPrism\Tasks\OrthographyTask::class,
-    \App\Ai\Tasks\TranslationTask::class, // exemple
+    \App\Ai\SupplierInvoiceExtraction::class, // exemple
 ],
 ```
 
@@ -123,6 +150,10 @@ résultat est une préoccupation séparée (voir `CorrectionService::apply()` et
 `autoApply()` plus bas) — les deux cas n'écrivent pas de la même façon.
 
 ### `CorrectionService` — appeler l'IA et appliquer le résultat
+
+Ce que la ressource de correction ne peut pas savoir seule — quel texte
+envoyer, à quel modèle rattacher la réponse, comment l'y écrire. L'appel
+lui-même passe par `AiRunner`, comme pour toute ressource.
 
 ```php
 $interaction = app(CorrectionService::class)->correct($subject, taskKey: 'orthography', trackable: $voyage);
@@ -365,6 +396,35 @@ public function onGroupCorrectionApplied(int $interactionId, array $values): voi
 }
 ```
 
+## Utilisation : une ressource avec formulaire et réception (`AiResourceAction`)
+
+Une modale en deux étapes : le formulaire d'entrée (`inputSchema()`, rangé sous
+`input`) ; à sa validation, `handleInput()` lance les appels et prépare la
+réception (`receptionSchema()`, rangée sous `reception`), que la soumission
+passe à `apply()`. Sans formulaire d'entrée, l'appel part à l'ouverture et
+seule la réception s'affiche. Même garde-fou que la correction : bouton
+désactivé sans clé API, message propre si l'appel échoue.
+
+```php
+use CharlesStOlive\FilamentPrism\Filament\Actions\AiResourceAction;
+
+AiResourceAction::make('createFromFile')
+    ->aiResource('supplier-invoice-extraction')
+    ->label('Créer à partir de fichiers')
+```
+
+`aiResource()` et non `resource()`, pour la même raison que
+`GroupCorrectionAction::subjects()` (voir plus haut).
+
+Exemple complet côté application : `filbreeze/app/Ai/SupplierInvoiceExtraction.php`
+— les fichiers sont scannés (texte du PDF, sinon OCR), l'IA choisit le
+fournisseur dans la liste des fournisseurs connus (`context()` +
+`EnumSchema`), `resolve()` recoupe par SIRET/TVA/nom et signale doublons et
+totaux incohérents, chaque fichier devient une facture brouillon, et `apply()`
+valide les brouillons vérifiés. L'interaction, sans modèle au moment de
+l'appel, est identifiée par l'empreinte du fichier (`subjectKey`) puis
+rattachée à la facture créée.
+
 ## Widgets de consommation
 
 - `AiTokenUsageOverview` — tokens de l'utilisateur courant, aujourd'hui / ce
@@ -378,7 +438,7 @@ public function onGroupCorrectionApplied(int $interactionId, array $values): voi
 - `ChoiceRenderer` : une réponse IA à choix multiples, affichée en boutons
   plutôt qu'en diff (le contrat `AiResultRenderer` + la colonne `meta` sont
   déjà en place pour ça).
-- D'autres tâches que `orthography` (traduction, reformulation...).
+- Traduction, reformulation... en ressources IA.
 - Un vrai dialogue multi-tours (`thread_id`/`parent_interaction_id` déjà en
   place, inutilisés).
 - Tests Pest côté package lui-même (aujourd'hui couvert côté application,

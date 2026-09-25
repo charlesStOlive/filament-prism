@@ -2,6 +2,7 @@
 
 namespace CharlesStOlive\FilamentPrism\Registry;
 
+use CharlesStOlive\FilamentPrism\Resources\AiResource;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
@@ -29,6 +30,16 @@ class AiTaskRegistry
     {
         return $this->all()->get($key)
             ?? throw new InvalidArgumentException("Aucune tâche filament-prism enregistrée sous la clé [{$key}].");
+    }
+
+    /** Une tâche qui porte tout le cycle d'appel (voir `AiResource`) — `AiRunner` n'accepte qu'elles. */
+    public function resource(string $key): AiResource
+    {
+        $task = $this->get($key);
+
+        return $task instanceof AiResource
+            ? $task
+            : throw new InvalidArgumentException('La tâche filament-prism ['.$key.'] doit étendre '.AiResource::class.'.');
     }
 
     public function has(string $key): bool

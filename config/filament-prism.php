@@ -10,7 +10,7 @@ return [
     'model' => env('FILAMENT_PRISM_MODEL', env('AI_MODEL', 'gpt-5.4-nano')),
 
     /*
-     * Les tâches enregistrées : chacune une classe qui implémente AiTask.
+     * Les ressources IA enregistrées : chacune une classe qui étend AiResource.
      * Une application ajoute les siennes en republiant/éditant ce fichier,
      * sans toucher au package.
      */

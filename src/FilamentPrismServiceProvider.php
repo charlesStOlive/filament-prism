@@ -3,6 +3,7 @@
 namespace CharlesStOlive\FilamentPrism;
 
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
+use CharlesStOlive\FilamentPrism\Services\AiRunner;
 use CharlesStOlive\FilamentPrism\Services\CorrectionService;
 use Filament\Support\Assets\Css;
 use Filament\Support\Facades\FilamentAsset;
@@ -26,6 +27,7 @@ class FilamentPrismServiceProvider extends PackageServiceProvider
     public function packageRegistered(): void
     {
         $this->app->singleton(AiTaskRegistry::class);
+        $this->app->singleton(AiRunner::class);
         $this->app->singleton(CorrectionService::class);
     }
 
