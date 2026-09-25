@@ -12,7 +12,8 @@ use Illuminate\Support\Collection;
 /**
  * Les calculs de « Consommation IA » (`AiUsageStats`), partagés par ses
  * widgets : les demandes d'une période et d'un utilisateur, puis leurs
- * chiffres par ressource.
+ * chiffres par ressource et par utilisateur. Chacun ne compte que les
+ * siennes, sauf qui peut tout voir (voir `AiAccess`).
  */
 final class AiUsage
 {
@@ -28,7 +29,7 @@ final class AiUsage
     /** @param  array<string, mixed>|null  $filters  Les filtres de la page : `period`, `user`. */
     public static function query(?array $filters): Builder
     {
-        return AiInteraction::query()
+        return AiAccess::scope(AiInteraction::query())
             ->when(self::since($filters), fn (Builder $query, Carbon $since) => $query->where('created_at', '>=', $since))
             ->when($filters['user'] ?? null, fn (Builder $query, mixed $user) => $query->where('user_id', $user));
     }
@@ -93,5 +94,42 @@ final class AiUsage
                 'average_duration' => $durations[$row->task] ?? null,
             ];
         })->sortByDesc('requests');
+    }
+
+    /**
+     * Une ligne par utilisateur : demandes, échecs, tokens envoyés/reçus, coût.
+     *
+     * @param  array<string, mixed>|null  $filters
+     * @return Collection<string, array<string, mixed>>
+     */
+    public static function byUser(?array $filters): Collection
+    {
+        $rows = self::query($filters)
+            ->toBase()
+            ->selectRaw('user_id')
+            ->selectRaw('count(*) as requests')
+            ->selectRaw("sum(case when status = 'failed' then 1 else 0 end) as failed")
+            ->selectRaw('sum(prompt_tokens) as prompt_tokens')
+            ->selectRaw('sum(completion_tokens) as completion_tokens')
+            ->selectRaw('sum(cost) as cost')
+            ->selectRaw('count(cost) as priced')
+            ->groupBy('user_id')
+            ->get();
+
+        $userModel = (string) config('auth.providers.users.model');
+        $names = $userModel::query()->whereKey($rows->pluck('user_id')->filter()->all())->pluck('name', (new $userModel)->getKeyName());
+
+        return $rows
+            ->mapWithKeys(fn (object $row): array => [(string) ($row->user_id ?? 'none') => [
+                'user' => $row->user_id === null ? 'Sans utilisateur (tâche automatique)' : ($names[$row->user_id] ?? '#'.$row->user_id),
+                'requests' => (int) $row->requests,
+                'failed' => (int) $row->failed,
+                'prompt_tokens' => (int) $row->prompt_tokens,
+                'completion_tokens' => (int) $row->completion_tokens,
+                'total_tokens' => (int) $row->prompt_tokens + (int) $row->completion_tokens,
+                'cost' => $row->priced > 0 ? (float) $row->cost : null,
+                'cost_is_partial' => $row->priced > 0 && (int) $row->priced < (int) $row->requests - (int) $row->failed,
+            ]])
+            ->sortByDesc('total_tokens');
     }
 }

@@ -8,31 +8,28 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Tokens dépensés par l'utilisateur courant, aujourd'hui et ce mois-ci.
- * Calculé sur `AiInteraction`, jamais sur un compteur séparé : la ligne
- * persistée dès l'appel IA est la seule source de vérité.
+ * Ce que l'utilisateur courant a consommé lui-même — tokens aujourd'hui, ce
+ * mois-ci, et le coût du mois quand ses modèles ont un prix (voir
+ * `filament-prism.pricing`). Calculé sur `AiInteraction`, jamais sur un
+ * compteur séparé : la ligne persistée à chaque appel est la seule source de vérité.
  */
 class AiTokenUsageOverview extends StatsOverviewWidget
 {
-    protected ?string $heading = 'Consommation IA';
+    protected ?string $heading = 'Ma consommation';
 
     protected function getStats(): array
     {
-        $userId = Auth::id();
+        $mine = fn () => AiInteraction::query()->where('user_id', Auth::id());
+        $month = [now()->startOfMonth(), now()->endOfMonth()];
 
-        $today = AiInteraction::query()
-            ->where('user_id', $userId)
-            ->whereDate('created_at', today())
-            ->sum('total_tokens');
-
-        $thisMonth = AiInteraction::query()
-            ->where('user_id', $userId)
-            ->whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()])
-            ->sum('total_tokens');
+        $today = $mine()->whereDate('created_at', today())->sum('total_tokens');
+        $thisMonth = $mine()->whereBetween('created_at', $month)->sum('total_tokens');
+        $cost = $mine()->whereBetween('created_at', $month)->whereNotNull('cost')->sum('cost');
 
         return [
-            Stat::make('Tokens aujourd’hui', number_format($today, 0, ',', ' ')),
-            Stat::make('Tokens ce mois', number_format($thisMonth, 0, ',', ' ')),
+            Stat::make('Tokens aujourd’hui', number_format((int) $today, 0, ',', ' ')),
+            Stat::make('Tokens ce mois', number_format((int) $thisMonth, 0, ',', ' ')),
+            Stat::make('Coût ce mois', $cost > 0 ? number_format((float) $cost, 2, ',', ' ').' '.config('filament-prism.currency') : '—'),
         ];
     }
 }

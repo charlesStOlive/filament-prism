@@ -7,6 +7,7 @@ use CharlesStOlive\FilamentPrism\Filament\Resources\AiInteractions\Pages\ViewAiI
 use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
+use CharlesStOlive\FilamentPrism\Support\AiAccess;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
@@ -16,7 +17,6 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Auth;
 use UnitEnum;
 
 /**
@@ -25,6 +25,14 @@ use UnitEnum;
  * demande et ses variantes (voir `ViewAiInteraction`, `AiInteractionList`).
  * On n'y crée rien : une demande part de là où elle a un sens (la
  * bibliothèque, un formulaire...).
+ *
+ * Chacun n'y voit que ses demandes ; qui peut tout voir (voir `AiAccess`) voit
+ * celles de tout le monde, avec leur auteur, et peut filtrer par personne.
+ *
+ * `$specificPermissions` déclare la permission `aiinteraction.viewallusers`
+ * au format de charlesstolive/filament-permission-manager (`permissions:sync`
+ * la crée) — sans en dépendre : une application qui s'en sert la vérifie dans
+ * `FilamentPrismPlugin::seeAllRequestsUsing()`.
  */
 class AiInteractionResource extends Resource
 {
@@ -40,6 +48,12 @@ class AiInteractionResource extends Resource
 
     protected static ?string $slug = 'ai-interactions';
 
+    /** Voir les demandes de tout le monde (voir la docblock de la classe). */
+    public const SEE_ALL_PERMISSION = 'aiinteraction.viewallusers';
+
+    /** @var array<int, string> Lue par filament-permission-manager (`permissions:sync`). */
+    protected static array $specificPermissions = ['viewallusers'];
+
     public static function getNavigationGroup(): string|UnitEnum|null
     {
         return filament()->hasPlugin(FilamentPrismPlugin::ID) ? FilamentPrismPlugin::get()->getNavigationGroup() : null;
@@ -48,6 +62,12 @@ class AiInteractionResource extends Resource
     public static function canCreate(): bool
     {
         return false;
+    }
+
+    /** Chacun ses demandes, sauf qui peut tout voir — la page d'une demande comprise. */
+    public static function getEloquentQuery(): Builder
+    {
+        return AiAccess::scope(parent::getEloquentQuery());
     }
 
     public static function table(Table $table): Table
@@ -63,7 +83,7 @@ class AiInteractionResource extends Resource
                     ->badge()
                     ->formatStateUsing(fn (string $state): string => AiInteraction::statusLabels()[$state] ?? $state)
                     ->color(fn (string $state): string => AiInteraction::statusColor($state)),
-                TextColumn::make('user.name')->label('Par'),
+                TextColumn::make('user.name')->label('Par')->visible(fn (): bool => AiAccess::canSeeAll()),
                 TextColumn::make('total_tokens')->label('Tokens')->numeric()->sortable(),
                 TextColumn::make('cost')
                     ->label('Coût')
@@ -77,11 +97,13 @@ class AiInteractionResource extends Resource
                     ->placeholder('—'),
             ])
             ->filters([
-                Filter::make('mine')
-                    ->label('Mes demandes')
-                    ->toggle()
-                    ->default()
-                    ->query(fn (Builder $query) => $query->where('user_id', Auth::id())),
+                SelectFilter::make('user_id')
+                    ->label('Par')
+                    ->relationship('user', 'name')
+                    ->searchable()
+                    ->preload()
+                    ->multiple()
+                    ->visible(fn (): bool => AiAccess::canSeeAll()),
                 SelectFilter::make('task')->label('Ressource')->options(fn (): array => static::taskLabels())->multiple(),
                 SelectFilter::make('status')->label('Statut')->options(AiInteraction::statusLabels())->multiple(),
                 Filter::make('created_at')

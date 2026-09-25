@@ -4,7 +4,6 @@ namespace CharlesStOlive\FilamentPrism\Resources;
 
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Services\AiRunner;
-use CharlesStOlive\FilamentPrism\Support\ImageResultRenderer;
 use CharlesStOlive\FilamentPrism\Support\TextDiffRenderer;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
 use Filament\Schemas\Components\Component;
@@ -63,8 +62,11 @@ use Prism\Prism\ValueObjects\Media\Media;
  *   (`Prism::image()`), rangées sur le disque de la config ; `attachments()`
  *   y sont les photos à retravailler. `configureImageRequest()` règle la
  *   taille, la qualité...
- * - `sourcePreviews()` / `describeInput()` — ce que la page « Demandes IA »
- *   montre d'une demande : les images de départ, les réglages choisis.
+ * - `resultSchema()` / `inputDisplaySchema()` — l'affichage d'une demande
+ *   (modale, slide-over, volet, page « Demandes IA ») : des composants
+ *   Filament, le plus souvent des `TextEntry` ; sans eux, une grille par défaut
+ *   (voir `AiResultSchema`), nourrie par `sourcePreviews()` (les images de
+ *   départ) et `describeInput()` (les réglages, lisibles).
  * - `applyResultLabel()` / `applyResult()` — ce que devient un résultat
  *   accepté (une image ajoutée à une bibliothèque...), depuis la page
  *   « Demandes IA ». Sans libellé, un résultat ne s'accepte pas : il se
@@ -240,13 +242,36 @@ abstract class AiResource implements AiTask
         throw new LogicException(static::class.' n’a pas de réception à soumettre (apply()).');
     }
 
-    /** L'affichage d'une interaction : dans la revue de correction (`CorrectionReview`), dans la page « Demandes IA ». */
+    /** L'affichage d'une interaction dans la revue de correction (`CorrectionReview`). */
     public function rendererClass(): string
     {
-        return $this->generatesImages() ? ImageResultRenderer::class : TextDiffRenderer::class;
+        return TextDiffRenderer::class;
     }
 
-    // ── La page « Demandes IA » ───────────────────────────────────────────
+    // ── L'affichage d'une demande (« Demandes IA ») ───────────────────────
+
+    /**
+     * Le résultat d'une demande, en composants Filament — le plus souvent des `TextEntry` ; le
+     * schéma porte la demande comme `record` (`TextEntry::make('output.summary')`). `null` :
+     * l'affichage par défaut, une grille d'entrées (voir `AiResultSchema::defaultResult()`).
+     *
+     * @return array<int, Component>|null
+     */
+    public function resultSchema(AiInteraction $interaction): ?array
+    {
+        return null;
+    }
+
+    /**
+     * Les réglages d'une demande, en composants Filament. `null` : ceux de `describeInput()`, en
+     * grille (voir `AiResultSchema::defaultInput()`).
+     *
+     * @return array<int, Component>|null
+     */
+    public function inputDisplaySchema(AiInteraction $interaction): ?array
+    {
+        return null;
+    }
 
     /**
      * Les images de départ d'une demande, pour les montrer à côté du résultat.

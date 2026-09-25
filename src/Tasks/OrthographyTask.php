@@ -2,8 +2,10 @@
 
 namespace CharlesStOlive\FilamentPrism\Tasks;
 
+use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Resources\AiResource;
 use CharlesStOlive\FilamentPrism\Support\CorrectableField;
+use Filament\Schemas\Components\Html;
 use Prism\Prism\Schema\ObjectSchema;
 
 /**
@@ -45,6 +47,12 @@ class OrthographyTask extends AiResource
     public function label(): string
     {
         return 'Orthographe';
+    }
+
+    /** Dans « Demandes IA » aussi, le diff « Avant / Après » de la revue, plutôt qu'une grille des textes corrigés. */
+    public function resultSchema(AiInteraction $interaction): array
+    {
+        return [Html::make(fn () => app($this->rendererClass())->render($interaction)->render())];
     }
 
     /**

@@ -102,7 +102,7 @@
 }
 
 /*
- * Les demandes IA (ai-interaction-list.blade.php) et un résultat en image (results/images.blade.php).
+ * Les demandes IA (ai-interaction-card.blade.php, ai-interaction-list.blade.php).
  * Couleurs : les variables du panel Filament (--gray-*, --danger-*), en clair comme en sombre.
  */
 
@@ -173,6 +173,15 @@
     gap: 0.25rem;
     font-size: 0.75rem;
     color: var(--gray-500);
+}
+
+.fp-interaction-author {
+    font-weight: 600;
+    color: var(--gray-700);
+}
+
+:where(.dark) .fp-interaction-author {
+    color: var(--gray-200);
 }
 
 .fp-interaction-settings {

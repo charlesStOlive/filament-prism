@@ -25,6 +25,9 @@ et grammaticale** (`orthography`) ; une application déclare les siennes
 - [Utilisation : une ressource avec formulaire et réception (`AiResourceAction`)](#utilisation--une-ressource-avec-formulaire-et-réception-airesourceaction)
 - [Demandes en arrière-plan et images (`queued()`, `generatesImages()`)](#demandes-en-arrière-plan-et-images-queued-generatesimages)
 - [« Demandes IA » et « Consommation IA » (`FilamentPrismPlugin`)](#demandes-ia-et-consommation-ia-filamentprismplugin)
+  - [Qui voit quoi (`AiAccess`)](#qui-voit-quoi-aiaccess)
+  - [Afficher les demandes : modale, slide-over, volet](#afficher-les-demandes--modale-slide-over-volet)
+  - [L'affichage d'une demande : piloté par la ressource](#laffichage-dune-demande--piloté-par-la-ressource)
 - [Widgets de consommation](#widgets-de-consommation)
 - [Mise à jour](#mise-à-jour)
 - [Roadmap (hors périmètre v1)](#roadmap-hors-périmètre-v1)
@@ -466,8 +469,9 @@ un modèle d'image n'ayant pas de prompt système, `systemPrompt()` est placé e
 tête du prompt.
 
 Ce que « Demandes IA » montre et permet d'une demande, la ressource le dit :
-`sourcePreviews()` (les images de départ), `describeInput()` (les réglages,
-lisibles), `applyResultLabel()`/`applyResult()` (accepter un résultat — ex.
+`resultSchema()`/`inputDisplaySchema()` (voir plus bas), `sourcePreviews()`
+(les images de départ), `describeInput()` (les réglages, lisibles),
+`applyResultLabel()`/`applyResult()` (accepter un résultat — ex.
 l'ajouter à une bibliothèque ; sans libellé, un résultat se consulte, s'ignore
 ou se refait seulement), `resultUrl()` (où mène la notification).
 
@@ -478,30 +482,105 @@ montre que le formulaire d'entrée et se ferme à l'envoi
 ## « Demandes IA » et « Consommation IA » (`FilamentPrismPlugin`)
 
 ```php
-->plugins([FilamentPrismPlugin::make()->navigationGroup('IA')])
+->plugins([
+    FilamentPrismPlugin::make()
+        ->navigationGroup('IA')
+        ->seeAllRequestsUsing(fn (User $user): bool => $user->can('…')), // voir plus bas
+])
 ->databaseNotifications() // la notification de fin d'une demande mise en file
 ```
 
-- **Demandes IA** (`AiInteractionResource`) : toutes les demandes, filtrées par
-  défaut sur les siennes (ressource, statut, dates) ; une demande s'ouvre sur
-  son fil — ses variantes, chacune avec son résultat et ses boutons
-  (« Accepter », « Ignorer », « Refaire », « Relancer »).
-- **Consommation IA** (`AiUsageStats`) : par ressource, sur une période et pour
-  une personne, le nombre de demandes, d'échecs, le taux d'acceptation
-  (acceptées / vérifiées), les tokens, le coût et la durée moyenne ; et les
-  demandes dans le temps. Le coût n'est connu que pour les modèles de
-  `filament-prism.pricing` (prix pour un million de tokens, `input_image` à
-  part pour les photos jointes) — une somme partielle est signalée.
+- **Demandes IA** (`AiInteractionResource`) : les demandes (ressource, statut,
+  dates) ; une demande s'ouvre sur son fil — ses variantes, chacune avec son
+  résultat et ses boutons (« Accepter », « Ignorer », « Refaire », « Relancer »).
+- **Consommation IA** (`AiUsageStats`) : sa propre consommation (tokens du
+  jour, du mois, coût du mois), puis, par ressource sur une période, le nombre
+  de demandes, d'échecs, le taux d'acceptation (acceptées / vérifiées), les
+  tokens, le coût et la durée moyenne ; les demandes dans le temps. Le coût
+  n'est connu que pour les modèles de `filament-prism.pricing` (prix pour un
+  million de tokens, `input_image` à part pour les photos jointes) — une somme
+  partielle est signalée.
 
-La même liste de demandes se pose ailleurs : `AiInteractionList::forTrackable($voyage)`
-dans un schéma, ou `AiInteractionsSidePane::forTrackable($voyage)` dans le
-volet latéral de filament-ui. Elle se redessine toutes les 5 s tant qu'une
-demande tourne, et à l'événement `AiInteractionList::CHANGED_EVENT`.
+### Qui voit quoi (`AiAccess`)
+
+Chacun ne voit que **ses** demandes et **sa** consommation — listes, fil d'une
+demande (la page d'une demande d'un autre répond 404), stats. Qui peut tout
+voir voit celles de tout le monde, **avec leur auteur** (sur chaque carte, en
+colonne et en filtre de « Demandes IA »), et la consommation **par
+utilisateur** (`AiUsageByUser`).
+
+« Tout voir » se décide dans le panel (`seeAllRequestsUsing()`), sinon par
+l'ability Gate `filament-prism.see-all-requests` (refusée tant que
+l'application ne la définit pas). `AiInteractionResource` déclare aussi la
+permission `aiinteraction.viewallusers` au format de
+charlesstolive/filament-permission-manager (`$specificPermissions`, lu par
+`permissions:sync`) sans dépendre de ce package ; une application qui s'en
+sert la vérifie ainsi :
+
+```php
+->seeAllRequestsUsing(function (User $user): bool {
+    try {
+        return PermissionService::userCan($user, AiInteractionResource::SEE_ALL_PERMISSION);
+    } catch (PermissionDoesNotExist) {
+        return false; // pas encore créée par permissions:sync
+    }
+})
+```
+
+> **Piège : `PermissionService::userCan()` lève une exception pour une
+> permission absente de la base**, au lieu de répondre non. Sans le `try`,
+> toute page qui montre une demande IA plante tant que `permissions:sync` n'a
+> pas tourné.
+
+### Afficher les demandes : modale, slide-over, volet
+
+La même liste (`AiInteractionList`, une carte `AiInteractionCard` par demande,
+les plus récentes d'abord), trois façons de l'ouvrir :
+
+```php
+AiInteractionsAction::make()                                        // modale : toutes mes demandes
+AiInteractionsAction::make()->trackable($this->record)->slideOver() // slide-over : celles de ce voyage
+AiInteractionsSidePane::make($this->record, tasks: ['photo-sketch']) // volet latéral de filament-ui (HasSidePane)
+```
+
+`trackable` restreint à ce qui a été demandé pour un modèle, `tasks` à
+certaines ressources ; sans l'un ni l'autre : toutes ses demandes. Le bouton
+de `AiInteractionsAction` porte le nombre de demandes en cours. Une carte se
+redessine seule toutes les 5 s tant que sa demande tourne ; la liste, quand une
+demande part ou aboutit sur la page (`AiInteractionList::CHANGED_EVENT`).
+
+### L'affichage d'une demande : piloté par la ressource
+
+Réglages et résultat sont des **composants Filament** — des entrées
+d'infolist, le plus souvent des `TextEntry` —, que la ressource déclare ; le
+schéma porte la demande comme `record` :
+
+```php
+public function resultSchema(AiInteraction $interaction): ?array
+{
+    return [
+        TextEntry::make('output.summary')->label('Résumé')->columnSpanFull(),
+        TextEntry::make('output.language')->label('Langue')->badge(),
+    ];
+}
+
+public function inputDisplaySchema(AiInteraction $interaction): ?array { /* les réglages */ }
+```
+
+Sans rien de déclaré (`null`), `AiResultSchema` affiche une **grille
+Filament** (`Grid`) : une `TextEntry` par valeur de la réponse, libellée par
+`meta.labels` s'il y en a (oui/non, liste à puces, HTML nettoyé, texte long sur
+toute la largeur, JSON à défaut) ; les images de départ (`sourcePreviews()`) et
+produites (`output.images`) en `ImageEntry`, qui s'ouvrent en grand ; les
+réglages, ceux de `describeInput()` en grille. La correction orthographique
+déclare le sien : le diff « Avant / Après » de sa revue.
 
 ## Widgets de consommation
 
-- `AiTokenUsageOverview` — tokens de l'utilisateur courant, aujourd'hui / ce
-  mois (`StatsOverviewWidget`).
+- `AiTokenUsageOverview` — la consommation de l'utilisateur courant : tokens
+  aujourd'hui / ce mois, coût du mois (`StatsOverviewWidget`).
+- `AiUsageByResource`, `AiUsageByUser` (qui peut tout voir seulement),
+  `AiUsageChart` — ceux de « Consommation IA », qui lisent ses filtres.
 - `AiTokenUsageByTrackable` — historique des interactions d'un `trackable`
   donné (`AiTokenUsageByTrackable::make(['trackable' => $voyage])`), pour un
   futur « tokens de ce voyage » sur sa propre page.

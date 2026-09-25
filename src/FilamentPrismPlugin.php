@@ -4,8 +4,10 @@ namespace CharlesStOlive\FilamentPrism;
 
 use CharlesStOlive\FilamentPrism\Filament\Pages\AiUsageStats;
 use CharlesStOlive\FilamentPrism\Filament\Resources\AiInteractions\AiInteractionResource;
+use Closure;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
+use Illuminate\Contracts\Auth\Authenticatable;
 
 /**
  * Les pages de filament-prism dans un panel : « Demandes IA » (retrouver ses
@@ -15,12 +17,22 @@ use Filament\Panel;
  * mener, sauf si la ressource le dit (`AiResource::resultUrl()`).
  *
  *     ->plugins([FilamentPrismPlugin::make()->navigationGroup('Paramètres')])
+ *
+ * Chacun n'y voit que ses demandes et sa consommation ; qui peut tout voir (un
+ * super utilisateur) voit celles de tout le monde, avec leur auteur :
+ *
+ *     FilamentPrismPlugin::make()->seeAllRequestsUsing(fn (User $user): bool => $user->hasRole('Super Admin'))
+ *
+ * Sans cette règle, c'est l'ability `filament-prism.see-all-requests` qui
+ * décide (voir `Support\AiAccess`).
  */
 class FilamentPrismPlugin implements Plugin
 {
     public const ID = 'filament-prism';
 
     protected ?string $navigationGroup = null;
+
+    protected ?Closure $seeAllRequestsUsing = null;
 
     public static function make(): static
     {
@@ -48,6 +60,20 @@ class FilamentPrismPlugin implements Plugin
     public function getNavigationGroup(): ?string
     {
         return $this->navigationGroup;
+    }
+
+    /** @param  Closure(Authenticatable): bool  $callback */
+    public function seeAllRequestsUsing(?Closure $callback): static
+    {
+        $this->seeAllRequestsUsing = $callback;
+
+        return $this;
+    }
+
+    /** `null` : le panel ne le dit pas, l'ability décide (voir `Support\AiAccess`). */
+    public function canSeeAllRequests(Authenticatable $user): ?bool
+    {
+        return $this->seeAllRequestsUsing === null ? null : (bool) ($this->seeAllRequestsUsing)($user);
     }
 
     public function register(Panel $panel): void

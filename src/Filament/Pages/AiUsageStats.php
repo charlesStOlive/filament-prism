@@ -2,10 +2,13 @@
 
 namespace CharlesStOlive\FilamentPrism\Filament\Pages;
 
+use CharlesStOlive\FilamentPrism\Filament\Widgets\AiTokenUsageOverview;
 use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageByResource;
+use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageByUser;
 use CharlesStOlive\FilamentPrism\Filament\Widgets\AiUsageChart;
 use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
+use CharlesStOlive\FilamentPrism\Support\AiAccess;
 use CharlesStOlive\FilamentPrism\Support\AiUsage;
 use Filament\Forms\Components\Select;
 use Filament\Pages\Dashboard\Concerns\HasFiltersForm;
@@ -18,8 +21,9 @@ use UnitEnum;
 /**
  * « Consommation IA » : par ressource IA, combien de demandes, combien
  * d'échecs, combien de résultats acceptés, ce qu'elles ont coûté et combien de
- * temps elles ont pris — sur une période, pour tout le monde ou pour une
- * personne. Tout est calculé sur `ai_interactions` (voir `Support\\AiUsage`), jamais
+ * temps elles ont pris — sur une période. Chacun y voit sa propre
+ * consommation ; qui peut tout voir (voir `AiAccess`) celle de tout le monde,
+ * par utilisateur, et peut filtrer sur une personne. Tout est calculé sur `ai_interactions` (voir `Support\\AiUsage`), jamais
  * sur un compteur séparé.
  */
 class AiUsageStats extends Page
@@ -50,6 +54,7 @@ class AiUsageStats extends Page
             Select::make('user')
                 ->label('Utilisateur')
                 ->placeholder('Tout le monde')
+                ->visible(fn (): bool => AiAccess::canSeeAll())
                 ->options(fn (): array => AiInteraction::query()
                     ->whereNotNull('user_id')
                     ->with('user')
@@ -65,7 +70,9 @@ class AiUsageStats extends Page
         return $schema->components([
             EmbeddedSchema::make('filtersForm'),
             Grid::make(1)->schema(fn (): array => $this->getWidgetsSchemaComponents([
+                AiTokenUsageOverview::class,
                 AiUsageByResource::class,
+                AiUsageByUser::class,
                 AiUsageChart::class,
             ])),
         ]);
