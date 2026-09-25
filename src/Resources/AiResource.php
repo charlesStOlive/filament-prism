@@ -2,12 +2,15 @@
 
 namespace CharlesStOlive\FilamentPrism\Resources;
 
+use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Services\AiRunner;
+use CharlesStOlive\FilamentPrism\Support\ImageResultRenderer;
 use CharlesStOlive\FilamentPrism\Support\TextDiffRenderer;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
 use Filament\Schemas\Components\Component;
 use Illuminate\Support\Str;
 use LogicException;
+use Prism\Prism\Images\PendingRequest as ImageRequest;
 use Prism\Prism\Schema\ObjectSchema;
 use Prism\Prism\Structured\PendingRequest as StructuredRequest;
 use Prism\Prism\Text\PendingRequest as TextRequest;
@@ -50,6 +53,22 @@ use Prism\Prism\ValueObjects\Media\Media;
  * Une ressource qui a sa propre revue (la correction : `CorrectionReview`,
  * affichée par `rendererClass()`) n'a besoin ni de `receptionSchema()` ni
  * d'`apply()`.
+ *
+ * **Une demande qui dure** (une image générée : une minute, parfois plus)
+ * - `queued()` — la demande est enregistrée tout de suite, et un job fait
+ *   l'appel en arrière-plan (`AiRunner::queue()`) ; son auteur est prévenu
+ *   quand elle est prête. Son entrée doit alors tenir en JSON (des
+ *   identifiants, pas des fichiers) : c'est tout ce que le job reçoit.
+ * - `generatesImages()` — la réponse est une ou plusieurs images
+ *   (`Prism::image()`), rangées sur le disque de la config ; `attachments()`
+ *   y sont les photos à retravailler. `configureImageRequest()` règle la
+ *   taille, la qualité...
+ * - `sourcePreviews()` / `describeInput()` — ce que la page « Demandes IA »
+ *   montre d'une demande : les images de départ, les réglages choisis.
+ * - `applyResultLabel()` / `applyResult()` — ce que devient un résultat
+ *   accepté (une image ajoutée à une bibliothèque...), depuis la page
+ *   « Demandes IA ». Sans libellé, un résultat ne s'accepte pas : il se
+ *   consulte, s'ignore ou se refait.
  */
 abstract class AiResource implements AiTask
 {
@@ -67,7 +86,37 @@ abstract class AiResource implements AiTask
 
     public function model(): string
     {
-        return (string) config('filament-prism.model');
+        return (string) ($this->generatesImages() ? config('filament-prism.images.model') : config('filament-prism.model'));
+    }
+
+    /** L'icône de la ressource, dans la page « Demandes IA » et les actions qui la lancent. */
+    public function icon(): string
+    {
+        return $this->generatesImages() ? 'heroicon-o-photo' : 'heroicon-o-sparkles';
+    }
+
+    // ── Une demande qui dure ──────────────────────────────────────────────
+
+    /** L'appel se fait en arrière-plan (un job) plutôt que pendant la requête : voir `AiRunner::queue()`. */
+    public function queued(): bool
+    {
+        return false;
+    }
+
+    /** La réponse est une ou plusieurs images (`Prism::image()`), et non du texte. */
+    public function generatesImages(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Le temps laissé au provider pour répondre, en secondes ; `null` garde
+     * celui de prism (`prism.request_timeout`, 30 s par défaut — trop court
+     * pour générer une image).
+     */
+    public function timeout(): ?int
+    {
+        return $this->generatesImages() ? 240 : null;
     }
 
     // ── Avant l'appel ─────────────────────────────────────────────────────
@@ -158,6 +207,14 @@ abstract class AiResource implements AiTask
 
     public function configureRequest(StructuredRequest|TextRequest $request): void {}
 
+    /**
+     * La taille, la qualité... d'une image demandée (`withProviderOptions()`).
+     *
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $context
+     */
+    public function configureImageRequest(ImageRequest $request, array $input, array $context): void {}
+
     // ── Après l'appel ─────────────────────────────────────────────────────
 
     /**
@@ -183,9 +240,64 @@ abstract class AiResource implements AiTask
         throw new LogicException(static::class.' n’a pas de réception à soumettre (apply()).');
     }
 
-    /** L'affichage d'une interaction dans la revue de correction (`CorrectionReview`). */
+    /** L'affichage d'une interaction : dans la revue de correction (`CorrectionReview`), dans la page « Demandes IA ». */
     public function rendererClass(): string
     {
-        return TextDiffRenderer::class;
+        return $this->generatesImages() ? ImageResultRenderer::class : TextDiffRenderer::class;
+    }
+
+    // ── La page « Demandes IA » ───────────────────────────────────────────
+
+    /**
+     * Les images de départ d'une demande, pour les montrer à côté du résultat.
+     *
+     * @return array<int, array{url: string, label?: string|null}>
+     */
+    public function sourcePreviews(AiInteraction $interaction): array
+    {
+        return [];
+    }
+
+    /**
+     * Les réglages d'une demande, lisibles : libellé => valeur. Par défaut, les
+     * valeurs simples de l'entrée ; une ressource dit mieux ce qu'elles veulent dire.
+     *
+     * @param  array<string, mixed>  $input
+     * @return array<string, string>
+     */
+    public function describeInput(array $input): array
+    {
+        return collect($input)
+            ->filter(fn (mixed $value): bool => is_scalar($value) && $value !== '')
+            ->mapWithKeys(fn (mixed $value, string $key): array => [
+                Str::headline($key) => is_bool($value) ? ($value ? 'Oui' : 'Non') : (string) $value,
+            ])
+            ->all();
+    }
+
+    /** Le libellé du bouton qui accepte un résultat ; `null` : un résultat ne s'accepte pas. */
+    public function applyResultLabel(): ?string
+    {
+        return null;
+    }
+
+    /**
+     * Accepte le résultat d'une demande — à la ressource de le marquer
+     * `applied` (`AiInteraction::markApplied()`) une fois fait.
+     *
+     * @return string|null Le message de la notification de succès.
+     */
+    public function applyResult(AiInteraction $interaction): ?string
+    {
+        throw new LogicException(static::class.' n’a pas de résultat à accepter (applyResult()).');
+    }
+
+    /**
+     * Où mène la notification d'une demande terminée ; `null` : sa page dans
+     * « Demandes IA », quand le panel l'a (voir `FilamentPrismPlugin`).
+     */
+    public function resultUrl(AiInteraction $interaction): ?string
+    {
+        return null;
     }
 }

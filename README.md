@@ -23,7 +23,10 @@ et grammaticale** (`orthography`) ; une application déclare les siennes
 - [Utilisation : un texte hors modèle (`FieldsCorrectionSubject`)](#utilisation--un-texte-hors-modèle-fieldscorrectionsubject)
 - [Utilisation : plusieurs sujets en un seul appel (`CorrectionSubjectGroup`)](#utilisation--plusieurs-sujets-en-un-seul-appel-correctionsubjectgroup)
 - [Utilisation : une ressource avec formulaire et réception (`AiResourceAction`)](#utilisation--une-ressource-avec-formulaire-et-réception-airesourceaction)
+- [Demandes en arrière-plan et images (`queued()`, `generatesImages()`)](#demandes-en-arrière-plan-et-images-queued-generatesimages)
+- [« Demandes IA » et « Consommation IA » (`FilamentPrismPlugin`)](#demandes-ia-et-consommation-ia-filamentprismplugin)
 - [Widgets de consommation](#widgets-de-consommation)
+- [Mise à jour](#mise-à-jour)
 - [Roadmap (hors périmètre v1)](#roadmap-hors-périmètre-v1)
 
 ## Installation
@@ -77,8 +80,9 @@ Colonnes notables :
 | `subject_key` | Distingue plusieurs sujets rattachés au même modèle (ex. plusieurs périodes d'un même voyage). `null` quand le modèle seul suffit à identifier le sujet. |
 | `trackable_type`/`trackable_id` | Le périmètre d'agrégation pour les widgets de tokens (ex. le voyage entier), indépendant du modèle d'attache. |
 | `input`/`output` | Les valeurs envoyées, et la réponse structurée de l'IA (déjà décodée par Prism, pas de regex). |
-| `status` | `pending` → `applied`/`discarded`. Rien n'est supprimé au clic « ignorer » : l'historique reste consultable. |
-| `thread_id`/`parent_interaction_id` | Posées maintenant, inutilisées en v1 (chaque interaction est un fil à elle seule) : Prism sait déjà rejouer un historique de messages (`withMessages()`), elles éviteront un `ALTER TABLE` le jour où un vrai dialogue multi-tours existera. |
+| `status` | `queued` → `running` (une demande mise en file) → `pending` (résultat à vérifier) → `applied`/`discarded` ; ou `failed`. Rien n'est supprimé au clic « ignorer » : l'historique reste consultable. |
+| `started_at`/`finished_at`, `error`, `cost` | La durée de l'appel, le message (sûr à montrer) d'un échec, et le coût, calculé à l'appel d'après `filament-prism.pricing` (`AiCost`) — figé, un changement de tarif ne réécrit pas l'historique. |
+| `thread_id`/`parent_interaction_id` | Un fil : une demande et ses variantes (« Refaire » avec d'autres réglages, « Relancer » après un échec — `AiRunner::rerun()`). Prism sait aussi rejouer un historique de messages (`withMessages()`) : les mêmes colonnes serviront à un vrai dialogue multi-tours. |
 | `meta` (json) | Ce dont un renderer a besoin sans connaître le `CorrectionSubject` d'origine (il ne survit pas à la requête qui a appelé l'IA) : `meta.labels` porte le libellé de chaque champ (`CorrectableField::labelsByName()`), utilisé par `TextDiffRenderer`/`GroupedTextDiffRenderer` — sans ça, `CorrectableField::make('body')->label('Contenu')` n'aurait aucun effet visible, la vue régénérant un libellé générique (`Str::headline($field)`) faute d'accès à la déclaration d'origine. Un futur `ChoiceRenderer` y noterait par exemple l'option choisie. |
 
 ### `AiResource` — une ressource IA
@@ -105,8 +109,9 @@ raisonnable — une ressource ne redéfinit que ce qui la concerne :
 
 `provider()`/`model()` reprennent la config par défaut ; une ressource peut
 les redéfinir. `AiRunner::run()` porte le cycle commun : réutiliser une
-réponse `pending` déjà payée pour la même entrée, sinon appeler l'IA,
-`resolve()`, persister.
+réponse `pending` déjà payée pour la même entrée, sinon enregistrer la
+demande, appeler l'IA, `resolve()`, persister la réponse — ou l'échec
+(`failed`, puis l'exception relancée : les stats comptent les échecs).
 
 `OrthographyTask` est une ressource sans formulaire d'entrée ni réception de
 formulaire : son texte vient d'un `CorrectionSubject`, sa réception est la
@@ -425,6 +430,74 @@ valide les brouillons vérifiés. L'interaction, sans modèle au moment de
 l'appel, est identifiée par l'empreinte du fichier (`subjectKey`) puis
 rattachée à la facture créée.
 
+## Demandes en arrière-plan et images (`queued()`, `generatesImages()`)
+
+Une image générée prend une minute, parfois plus : trop pour tenir une requête
+ouverte. Une ressource qui déclare `queued(): true` est enregistrée tout de
+suite (`queued`), et un job (`RunAiInteraction`) fait l'appel ; son auteur
+est prévenu dans les notifications Filament en base quand elle est prête ou a
+échoué (`AiInteractionNotifier`). Son entrée doit tenir en JSON (des
+identifiants, pas des fichiers) : c'est tout ce que reçoit le job, la
+ressource retrouve le reste dans `context()`.
+
+```php
+app(AiRunner::class)->queue($resource, ['media_ids' => [12]], trackable: $voyage);
+app(AiRunner::class)->rerun($interaction, ['quality' => 'high']); // même fil, autres réglages
+```
+
+Une seule tentative (`tries = 1`) : relancer tout seul un appel, c'est risquer
+de le payer deux fois. Le job ne fait rien d'une demande qui n'est plus
+`queued`, et la marque `failed` si le worker l'interrompt.
+
+> **Piège : `retry_after` de la queue.** Il doit dépasser le temps laissé à une
+> demande (`filament-prism.queue.timeout`, 300 s), et le `--timeout` du worker
+> aussi — sinon une demande encore en cours est reprise par un autre worker.
+> Pour la connexion `database` : `DB_QUEUE_RETRY_AFTER=400`,
+> `php artisan queue:work --tries=1 --timeout=330`.
+
+Une ressource qui déclare `generatesImages(): true` appelle `Prism::image()` :
+ses `attachments()` sont les photos à retravailler (OpenAI passe alors par
+`images/edits`, jusqu'à 16 images), `configureImageRequest()` règle taille et
+qualité (`withProviderOptions()`), et les images reçues sont rangées sur le
+disque de la config (`filament-prism.images`) — `output.images` en garde le
+chemin, `AiInteraction::images()` l'adresse. Le délai d'attente est allongé
+(`timeout()`, 240 s : celui de prism, 30 s, est trop court pour une image) ;
+un modèle d'image n'ayant pas de prompt système, `systemPrompt()` est placé en
+tête du prompt.
+
+Ce que « Demandes IA » montre et permet d'une demande, la ressource le dit :
+`sourcePreviews()` (les images de départ), `describeInput()` (les réglages,
+lisibles), `applyResultLabel()`/`applyResult()` (accepter un résultat — ex.
+l'ajouter à une bibliothèque ; sans libellé, un résultat se consulte, s'ignore
+ou se refait seulement), `resultUrl()` (où mène la notification).
+
+`AiResourceAction` sait aussi lancer une ressource mise en file : sa modale ne
+montre que le formulaire d'entrée et se ferme à l'envoi
+(`->trackable($voyage)` pour le périmètre).
+
+## « Demandes IA » et « Consommation IA » (`FilamentPrismPlugin`)
+
+```php
+->plugins([FilamentPrismPlugin::make()->navigationGroup('IA')])
+->databaseNotifications() // la notification de fin d'une demande mise en file
+```
+
+- **Demandes IA** (`AiInteractionResource`) : toutes les demandes, filtrées par
+  défaut sur les siennes (ressource, statut, dates) ; une demande s'ouvre sur
+  son fil — ses variantes, chacune avec son résultat et ses boutons
+  (« Accepter », « Ignorer », « Refaire », « Relancer »).
+- **Consommation IA** (`AiUsageStats`) : par ressource, sur une période et pour
+  une personne, le nombre de demandes, d'échecs, le taux d'acceptation
+  (acceptées / vérifiées), les tokens, le coût et la durée moyenne ; et les
+  demandes dans le temps. Le coût n'est connu que pour les modèles de
+  `filament-prism.pricing` (prix pour un million de tokens, `input_image` à
+  part pour les photos jointes) — une somme partielle est signalée.
+
+La même liste de demandes se pose ailleurs : `AiInteractionList::forTrackable($voyage)`
+dans un schéma, ou `AiInteractionsSidePane::forTrackable($voyage)` dans le
+volet latéral de filament-ui. Elle se redessine toutes les 5 s tant qu'une
+demande tourne, et à l'événement `AiInteractionList::CHANGED_EVENT`.
+
 ## Widgets de consommation
 
 - `AiTokenUsageOverview` — tokens de l'utilisateur courant, aujourd'hui / ce
@@ -433,13 +506,27 @@ rattachée à la facture créée.
   donné (`AiTokenUsageByTrackable::make(['trackable' => $voyage])`), pour un
   futur « tokens de ce voyage » sur sa propre page.
 
+## Mise à jour
+
+Une application qui utilise déjà le package republie ses migrations et migre :
+`add_run_tracking_to_ai_interactions_table` ajoute `started_at`,
+`finished_at`, `error` et `cost` — `AiRunner` les écrit à chaque appel, **même
+synchrone** : sans cette migration, tout appel échoue.
+
+```bash
+sail artisan vendor:publish --tag=filament-prism-migrations
+sail artisan migrate
+```
+
 ## Roadmap (hors périmètre v1)
 
 - `ChoiceRenderer` : une réponse IA à choix multiples, affichée en boutons
   plutôt qu'en diff (le contrat `AiResultRenderer` + la colonne `meta` sont
   déjà en place pour ça).
 - Traduction, reformulation... en ressources IA.
-- Un vrai dialogue multi-tours (`thread_id`/`parent_interaction_id` déjà en
-  place, inutilisés).
+- Un vrai dialogue multi-tours (`thread_id`/`parent_interaction_id` servent
+  déjà aux variantes d'une demande).
+- Nettoyer les images des demandes ignorées (elles restent sur le disque, avec
+  l'historique).
 - Tests Pest côté package lui-même (aujourd'hui couvert côté application,
   `desapp/tests/Feature/VoyageCorrectionTest.php`, avec `Prism::fake()`).

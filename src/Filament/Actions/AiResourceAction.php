@@ -2,6 +2,7 @@
 
 namespace CharlesStOlive\FilamentPrism\Filament\Actions;
 
+use CharlesStOlive\FilamentPrism\Livewire\AiInteractionList;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Resources\AiResource;
 use CharlesStOlive\FilamentPrism\Services\AiRunner;
@@ -15,6 +16,7 @@ use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Components\Wizard\Step;
 use Filament\Support\Enums\Width;
 use Filament\Support\Exceptions\Halt;
+use Illuminate\Database\Eloquent\Model;
 use RuntimeException;
 
 /**
@@ -28,6 +30,11 @@ use RuntimeException;
  * Sans formulaire d'entrée, l'appel part à l'ouverture de la modale et seule
  * la réception s'affiche.
  *
+ * Une ressource mise en file (`AiResource::queued()`) n'a pas de deuxième
+ * étape : la validation du formulaire enregistre la demande, un job fait
+ * l'appel, et la réception se fait plus tard, depuis « Demandes IA » (voir
+ * `AiInteractionList`) — la modale se ferme tout de suite.
+ *
  *     AiResourceAction::make('createFromFiles')->aiResource('supplier-invoice-extraction')
  *
  * `aiResource()` et non `resource()` : une méthode d'un nom déjà porté par
@@ -39,6 +46,8 @@ class AiResourceAction extends Action
 {
     protected string|Closure|null $aiResourceKey = null;
 
+    protected Model|Closure|null $trackable = null;
+
     public static function getDefaultName(): ?string
     {
         return 'aiResource';
@@ -49,6 +58,19 @@ class AiResourceAction extends Action
         $this->aiResourceKey = $key;
 
         return $this;
+    }
+
+    /** Le périmètre de la demande pour les stats et les listes de demandes (ex. le voyage). */
+    public function trackable(Model|Closure|null $trackable): static
+    {
+        $this->trackable = $trackable;
+
+        return $this;
+    }
+
+    public function getTrackable(): ?Model
+    {
+        return $this->evaluate($this->trackable);
     }
 
     public function getAiResource(): AiResource
@@ -73,8 +95,11 @@ class AiResourceAction extends Action
             ->modalWidth(Width::FiveExtraLarge)
             ->disabled(fn (): bool => ! $this->isProviderConfigured())
             ->tooltip(fn (): ?string => $this->isProviderConfigured() ? null : 'Clé API manquante pour ce provider — voir le fichier .env.')
-            ->fillForm(fn (): array => $this->hasInputStep() ? [] : ['reception' => $this->handleInput([])])
-            ->schema(fn (): array => $this->hasInputStep() ? [
+            ->fillForm(fn (): array => $this->hasInputStep() || $this->isQueued() ? [] : ['reception' => $this->handleInput([])])
+            ->modalSubmitActionLabel(fn (): ?string => $this->isQueued() ? 'Envoyer la demande' : null)
+            ->schema(fn (): array => $this->isQueued() ? [
+                Group::make($this->getAiResource()->inputSchema() ?? [])->statePath('input'),
+            ] : ($this->hasInputStep() ? [
                 Step::make('input')
                     ->label('Données')
                     ->schema([Group::make($this->getAiResource()->inputSchema())->statePath('input')])
@@ -82,14 +107,30 @@ class AiResourceAction extends Action
                 Step::make('reception')
                     ->label('Vérification')
                     ->schema([$this->receptionGroup()]),
-            ] : [$this->receptionGroup()])
-            ->action(fn (array $data) => $this->getAiResource()->apply($data['reception'] ?? []));
+            ] : [$this->receptionGroup()]))
+            ->action(fn (array $data) => $this->isQueued()
+                ? $this->queue($data['input'] ?? [])
+                : $this->getAiResource()->apply($data['reception'] ?? []));
     }
 
     /** Un wizard seulement quand la ressource a un formulaire d'entrée — connu une fois `aiResource()` posé, pas au `setUp()`. */
     public function isWizard(): bool
     {
-        return $this->hasInputStep();
+        return $this->hasInputStep() && ! $this->isQueued();
+    }
+
+    protected function isQueued(): bool
+    {
+        return $this->getAiResource()->queued();
+    }
+
+    /** @param  array<string, mixed>  $input */
+    protected function queue(array $input): void
+    {
+        app(AiRunner::class)->queue($this->getAiResource(), $input, trackable: $this->getTrackable());
+
+        Notification::make()->success()->title('Demande envoyée')->body('Vous serez prévenu quand elle sera prête.')->send();
+        $this->getLivewire()->dispatch(AiInteractionList::CHANGED_EVENT);
     }
 
     protected function hasInputStep(): bool
