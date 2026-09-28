@@ -156,7 +156,7 @@ final class AiUsage
     public static function billing(?array $filters): Collection
     {
         $billed = self::billedQuery($filters)->toBase()
-            ->selectRaw('provider, sum(amount_eur) as amount_eur, sum(amount) as amount, max(currency) as currency, max(date) as last_date, count(*) as lines')
+            ->selectRaw('provider, sum(amount_eur) as amount_eur, sum(amount) as amount, max(currency) as currency, max(date) as last_date')
             ->groupBy('provider')
             ->get()
             ->keyBy('provider');
