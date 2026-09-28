@@ -19,18 +19,24 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\ValueObjects\GeneratedImage;
+use Prism\Prism\ValueObjects\Messages\AssistantMessage;
+use Prism\Prism\ValueObjects\Messages\UserMessage;
 use Prism\Prism\ValueObjects\Usage;
 use Throwable;
 
 /**
- * Le cycle commun à toute `AiResource` : réutiliser une réponse déjà payée,
- * sinon appeler l'IA, résoudre sa réponse (`AiResource::resolve()`) et la
- * persister dans une `AiInteraction`.
+ * Le cycle commun à toute `AiResource` : préparer la demande (`draft()`), la
+ * soumettre (`submit()` : tout de suite, ou en file pour une ressource
+ * `queued()`), résoudre la réponse (`AiResource::resolve()`) et la persister
+ * dans une `AiInteraction` ; puis, au besoin, l'affiner (`refine()`).
+ *
+ * Toute demande naît brouillon : rien n'est payé tant qu'elle n'est pas
+ * soumise. `run()` et `queue()` font les deux d'un coup, pour qui n'a rien à
+ * montrer avant l'envoi.
  *
  * La demande est enregistrée **avant** l'appel, pas après : une coupure en
- * plein appel laisse une trace (`running`, puis `failed`), et une demande mise
- * en file (`queue()`) existe dès qu'on la fait. Un appel qui échoue reste
- * aussi, `failed` avec son message : les stats comptent les échecs.
+ * plein appel laisse une trace (`running`, puis `failed`). Un appel qui échoue
+ * reste aussi, `failed` avec son message : les stats comptent les échecs.
  */
 class AiRunner
 {
@@ -49,13 +55,106 @@ class AiRunner
      */
     public function run(AiResource $resource, array $input, array $context = [], ?Model $attachTo = null, ?string $subjectKey = null, ?Model $trackable = null, array $meta = []): AiInteraction
     {
-        if ($pending = $this->reusablePending($resource->key(), $attachTo, $subjectKey, $input)) {
-            return $pending;
+        return $this->submit($this->prepare($resource, $input, $attachTo, $subjectKey, $trackable, $meta), $context);
+    }
+
+    /**
+     * Ce qu'on s'apprête à demander, sans l'envoyer : la réponse `pending` déjà payée pour cette même
+     * entrée s'il y en a une (voir `reusablePending()`), sinon un brouillon (`draft()`).
+     *
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $meta
+     */
+    public function prepare(AiResource $resource, array $input, ?Model $attachTo = null, ?string $subjectKey = null, ?Model $trackable = null, array $meta = []): AiInteraction
+    {
+        return $this->reusablePending($resource->key(), $attachTo, $subjectKey, $input)
+            ?? $this->draft($resource, $input, $attachTo, $subjectKey, $trackable, $meta);
+    }
+
+    /**
+     * Un brouillon : la demande telle qu'elle partira, que rien n'a encore payée. Pour un sujet
+     * identifié (`$attachTo`/`$subjectKey`), le brouillon qu'on avait déjà ouvert est repris, avec
+     * l'entrée d'aujourd'hui — un sujet n'a jamais qu'un brouillon par personne.
+     *
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $meta
+     */
+    public function draft(AiResource $resource, array $input, ?Model $attachTo = null, ?string $subjectKey = null, ?Model $trackable = null, array $meta = [], ?AiInteraction $parent = null): AiInteraction
+    {
+        $existing = $parent === null ? $this->existingDraft($resource->key(), $attachTo, $subjectKey) : null;
+
+        if ($existing !== null) {
+            $existing->forceFill(['input' => $input, 'meta' => $this->withPanel($meta) ?: null])->save();
+
+            return $existing;
         }
 
-        $interaction = $this->create($resource, $input, $attachTo, $subjectKey, $trackable, $meta, AiInteraction::STATUS_RUNNING);
+        return $this->create($resource, $input, $attachTo, $subjectKey, $trackable, $meta, AiInteraction::STATUS_DRAFT, $parent);
+    }
+
+    /**
+     * Envoie un brouillon à l'IA : en file (un job fait l'appel, voir `RunAiInteraction`) pour une
+     * ressource `queued()`, tout de suite sinon. Une demande qui n'est plus un brouillon est rendue
+     * telle quelle — un second clic ne repaie pas l'appel.
+     *
+     * @param  array<string, mixed>  $context  Ce que l'appelant sait en plus (jamais persisté).
+     *
+     * @throws AiProviderException
+     */
+    public function submit(AiInteraction $interaction, array $context = []): AiInteraction
+    {
+        if (! $interaction->isDraft()) {
+            return $interaction;
+        }
+
+        if ($this->tasks->resource($interaction->task)->queued()) {
+            $interaction->markQueued();
+            RunAiInteraction::dispatch($interaction->getKey());
+
+            return $interaction;
+        }
+
+        $interaction->markRunning();
 
         return $this->execute($interaction, $context);
+    }
+
+    /**
+     * Affine une demande : une nouvelle version du même fil, dont `$from` est le parent, avec
+     * d'autres réglages (`$input` remplace les valeurs de même clé) et/ou ce qui ne va pas
+     * (`$feedback`) — l'IA reçoit alors sa réponse précédente et la remarque (voir
+     * `AiResource::refinePrompt()`). Une version encore à vérifier passe à `refined` ; une version
+     * déjà acceptée ou ignorée, ou un échec (« Relancer »), reste ce qu'elle est.
+     *
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $context
+     *
+     * @throws AiProviderException
+     */
+    public function refine(AiInteraction $from, ?string $feedback = null, array $input = [], bool $submit = true, array $context = []): AiInteraction
+    {
+        $meta = Arr::only($from->meta ?? [], ['labels', 'fields', 'grouped']);
+        $feedback = trim((string) $feedback);
+
+        if ($feedback !== '') {
+            $meta['feedback'] = $feedback;
+        }
+
+        $child = $this->draft(
+            $this->tasks->resource($from->task),
+            array_replace($from->input ?? [], $input),
+            attachTo: $from->correctable,
+            subjectKey: $from->subject_key,
+            trackable: $from->trackable,
+            meta: $meta,
+            parent: $from,
+        );
+
+        if ($from->isStatus(AiInteraction::STATUS_PENDING)) {
+            $from->markRefined();
+        }
+
+        return $submit ? $this->submit($child, $context) : $child;
     }
 
     /**
@@ -72,31 +171,12 @@ class AiRunner
      */
     public function queue(AiResource $resource, array $input, ?Model $attachTo = null, ?string $subjectKey = null, ?Model $trackable = null, array $meta = [], ?AiInteraction $parent = null): AiInteraction
     {
-        $interaction = $this->create($resource, $input, $attachTo, $subjectKey, $trackable, $meta, AiInteraction::STATUS_QUEUED, $parent);
+        $interaction = $this->create($resource, $input, $attachTo, $subjectKey, $trackable, $meta, AiInteraction::STATUS_DRAFT, $parent);
+        $interaction->markQueued();
 
         RunAiInteraction::dispatch($interaction->getKey());
 
         return $interaction;
-    }
-
-    /**
-     * Refait une demande — avec d'autres réglages (`$input` remplace les
-     * valeurs de même clé), ou les mêmes (après un échec) : une nouvelle
-     * demande du même fil, dont `$from` est le parent.
-     *
-     * @param  array<string, mixed>  $input
-     */
-    public function rerun(AiInteraction $from, array $input = []): AiInteraction
-    {
-        return $this->queue(
-            $this->tasks->resource($from->task),
-            input: array_replace($from->input ?? [], $input),
-            attachTo: $from->correctable,
-            subjectKey: $from->subject_key,
-            trackable: $from->trackable,
-            meta: Arr::only($from->meta ?? [], ['labels']),
-            parent: $from,
-        );
     }
 
     /**
@@ -112,15 +192,15 @@ class AiRunner
         $resource = $this->tasks->resource($interaction->task);
         $input = $interaction->input ?? [];
 
-        if ($interaction->status !== AiInteraction::STATUS_RUNNING || $interaction->started_at === null) {
+        if (! $interaction->isStatus(AiInteraction::STATUS_RUNNING) || $interaction->started_at === null) {
             $interaction->markRunning();
         }
 
         try {
-            $context = [...$resource->context($input), ...$context];
+            $context = [...$resource->interactionContext($interaction), ...$resource->context($input), ...$context];
             [$raw, $usage, $details] = $resource->generatesImages()
                 ? $this->callImage($resource, $interaction, $input, $context)
-                : $this->call($resource, $input, $context);
+                : $this->call($resource, $interaction, $input, $context);
             $output = $resource->resolve($raw, $input, $context);
         } catch (AiProviderException $exception) {
             $interaction->markFailed($exception->getMessage());
@@ -145,7 +225,7 @@ class AiRunner
         $cost = AiCost::of($interaction->provider, $interaction->model, $usage->promptTokens, $usage->completionTokens, (array) ($details['input_tokens_details'] ?? []));
         $currency = AiProviders::currency($interaction->provider);
 
-        $interaction->forceFill([
+        $interaction->markPending([
             'kind' => $resource->generatesImages() ? 'image' : ($resource->responseSchema($input, $context) === null ? 'text' : 'structured'),
             'output' => $output,
             'meta' => $meta === [] ? null : $meta,
@@ -156,10 +236,7 @@ class AiRunner
             'currency' => $cost === null ? null : $currency,
             // Au dernier taux BCE connu ; complété plus tard si aucun ne l'est encore (voir AiBillingSync).
             'cost_eur' => $cost === null ? null : app(ExchangeRates::class)->toEur($cost, $currency, now()),
-            'status' => AiInteraction::STATUS_PENDING,
-            'error' => null,
-            'finished_at' => now(),
-        ])->save();
+        ]);
 
         return $interaction;
     }
@@ -183,12 +260,7 @@ class AiRunner
      */
     private function create(AiResource $resource, array $input, ?Model $attachTo, ?string $subjectKey, ?Model $trackable, array $meta, string $status, ?AiInteraction $parent = null): AiInteraction
     {
-        // Le panel d'où part la demande : c'est là que la notification de fin mène (voir RunAiInteraction).
-        $panel = Filament::getCurrentPanel()?->getId();
-
-        if ($panel !== null) {
-            $meta['panel'] ??= $panel;
-        }
+        $meta = $this->withPanel($meta);
 
         return AiInteraction::create([
             'user_id' => auth()->id(),
@@ -203,10 +275,61 @@ class AiRunner
             'input' => $input,
             'meta' => $meta === [] ? null : $meta,
             'status' => $status,
-            'started_at' => $status === AiInteraction::STATUS_RUNNING ? now() : null,
             'thread_id' => $parent->thread_id ?? (string) Str::uuid(),
             'parent_interaction_id' => $parent?->getKey(),
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     * @return array<string, mixed>
+     */
+    private function withPanel(array $meta): array
+    {
+        // Le panel d'où part la demande : c'est là que la notification de fin mène (voir RunAiInteraction).
+        $panel = Filament::getCurrentPanel()?->getId();
+
+        if ($panel !== null) {
+            $meta['panel'] ??= $panel;
+        }
+
+        return $meta;
+    }
+
+    /** La version qu'une demande affine, quand elle a une remarque à lui opposer ; `null` pour un simple nouvel essai. */
+    private function refinedFrom(AiInteraction $interaction): ?AiInteraction
+    {
+        if ($interaction->feedback() === null || $interaction->parent_interaction_id === null) {
+            return null;
+        }
+
+        $parent = $interaction->parent;
+
+        return $parent?->hasResult() ? $parent : null;
+    }
+
+    /** Le brouillon de cette personne pour ce sujet, s'il en a déjà un. */
+    private function existingDraft(string $resourceKey, ?Model $attachTo, ?string $subjectKey): ?AiInteraction
+    {
+        if ($attachTo === null && $subjectKey === null) {
+            return null;
+        }
+
+        return AiInteraction::query()
+            ->when($attachTo !== null, fn (Builder $query) => $query
+                ->where('correctable_type', $attachTo::class)
+                ->where('correctable_id', $attachTo->getKey()))
+            ->when(
+                $subjectKey === null,
+                fn (Builder $query) => $query->whereNull('subject_key'),
+                fn (Builder $query) => $query->where('subject_key', $subjectKey),
+            )
+            ->where('task', $resourceKey)
+            ->where('user_id', auth()->id())
+            ->whereNull('parent_interaction_id')
+            ->where('status', AiInteraction::STATUS_DRAFT)
+            ->latest('id')
+            ->first();
     }
 
     /**
@@ -221,7 +344,7 @@ class AiRunner
      *                             Prism/du client HTTP, pour que l'appelant puisse en montrer le
      *                             message tel quel plutôt que planter.
      */
-    private function call(AiResource $resource, array $input, array $context): array
+    private function call(AiResource $resource, AiInteraction $interaction, array $input, array $context): array
     {
         $schema = $resource->responseSchema($input, $context);
         $tools = $resource->tools($input, $context);
@@ -229,8 +352,20 @@ class AiRunner
         try {
             $request = ($schema === null ? Prism::text() : Prism::structured()->withSchema($schema))
                 ->using($resource->provider(), $resource->model())
-                ->withSystemPrompt($resource->systemPrompt())
-                ->withPrompt($resource->prompt($input, $context), $resource->attachments($input, $context));
+                ->withSystemPrompt($resource->systemPrompt());
+
+            $prompt = $resource->prompt($input, $context);
+            $attachments = $resource->attachments($input, $context);
+            $refined = $this->refinedFrom($interaction);
+
+            // Affiner : l'IA reprend la conversation — la demande, sa réponse, puis ce qui ne va pas.
+            $refined === null
+                ? $request->withPrompt($prompt, $attachments)
+                : $request->withMessages([
+                    new UserMessage($prompt, $attachments),
+                    new AssistantMessage(json_encode($refined->output ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)),
+                    new UserMessage($resource->refinePrompt((string) $interaction->feedback())),
+                ]);
 
             if ($resource->timeout() !== null) {
                 $request->withClientOptions(['timeout' => $resource->timeout()]);
@@ -274,10 +409,18 @@ class AiRunner
     {
         try {
             $prompt = trim($resource->systemPrompt()."\n\n".$resource->prompt($input, $context));
+            $attachments = $resource->attachments($input, $context);
+            $refined = $this->refinedFrom($interaction);
+
+            // Affiner une image : on retravaille celle qu'on avait obtenue, avec ce qui ne va pas.
+            if ($refined !== null) {
+                $prompt .= "\n\n".$resource->refinePrompt((string) $interaction->feedback());
+                $attachments = $resource->refineAttachments($refined, $input, $context) ?: $attachments;
+            }
 
             $request = Prism::image()
                 ->using($resource->provider(), $resource->model())
-                ->withPrompt($prompt, $resource->attachments($input, $context));
+                ->withPrompt($prompt, $attachments);
 
             if ($resource->timeout() !== null) {
                 $request->withClientOptions(['timeout' => $resource->timeout()]);

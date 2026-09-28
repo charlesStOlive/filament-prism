@@ -16,7 +16,7 @@ use Throwable;
  *
  * Une seule tentative : relancer tout seul un appel qui a échoué, c'est
  * risquer de payer deux fois. Une demande échouée se refait à la main (« Relancer »,
- * voir `AiRunner::rerun()`). Pour la même raison, elle ne s'exécute que si elle
+ * voir `AiRunner::refine()`). Pour la même raison, elle ne s'exécute que si elle
  * est encore `queued` : un job repris par un autre worker (un `retry_after` de
  * la queue plus court que la demande) ne rappelle pas l'IA.
  */
@@ -39,7 +39,7 @@ class RunAiInteraction implements ShouldQueue
     {
         $interaction = AiInteraction::find($this->interactionId);
 
-        if ($interaction === null || $interaction->status !== AiInteraction::STATUS_QUEUED) {
+        if ($interaction === null || ! $interaction->isStatus(AiInteraction::STATUS_QUEUED)) {
             return;
         }
 

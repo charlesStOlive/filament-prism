@@ -74,14 +74,14 @@ final class AiUsage
         $labels = app(AiTaskRegistry::class)->all()->map(fn (AiTask $task): string => method_exists($task, 'label') ? $task->label() : $task->key());
 
         return $rows->map(function (array $row, string $task) use ($durations, $labels, $billed): array {
-            $reviewed = $row['applied'] + $row['discarded'];
+            $reviewed = $row['accepted'] + $row['discarded'];
 
             return [
                 ...$row,
                 'task' => $task,
                 'label' => $labels[$task] ?? $task,
                 'failure_rate' => $row['requests'] > 0 ? $row['failed'] / $row['requests'] : null,
-                'acceptance_rate' => $reviewed > 0 ? $row['applied'] / $reviewed : null,
+                'acceptance_rate' => $reviewed > 0 ? $row['accepted'] / $reviewed : null,
                 'billed_eur' => $billed[$task] ?? null,
                 'average_duration' => $durations[$task] ?? null,
             ];
@@ -206,9 +206,10 @@ final class AiUsage
         return $query->toBase()
             ->selectRaw("{$groupBy} as group_key")
             ->selectRaw('count(*) as requests')
-            ->selectRaw("sum(case when status = 'failed' then 1 else 0 end) as failed")
-            ->selectRaw("sum(case when status = 'applied' then 1 else 0 end) as applied")
-            ->selectRaw("sum(case when status = 'discarded' then 1 else 0 end) as discarded")
+            // Une demande archivée compte avec l'issue qu'elle avait (`archived_from`).
+            ->selectRaw("sum(case when coalesce(archived_from, status) = 'failed' then 1 else 0 end) as failed")
+            ->selectRaw("sum(case when coalesce(archived_from, status) = 'accepted' then 1 else 0 end) as accepted")
+            ->selectRaw("sum(case when coalesce(archived_from, status) = 'discarded' then 1 else 0 end) as discarded")
             ->selectRaw('sum(prompt_tokens) as prompt_tokens')
             ->selectRaw('sum(completion_tokens) as completion_tokens')
             ->selectRaw('sum(cost_eur) as cost_eur')
@@ -218,7 +219,7 @@ final class AiUsage
             ->mapWithKeys(fn (object $row): array => [(string) $row->group_key => [
                 'requests' => (int) $row->requests,
                 'failed' => (int) $row->failed,
-                'applied' => (int) $row->applied,
+                'accepted' => (int) $row->accepted,
                 'discarded' => (int) $row->discarded,
                 'prompt_tokens' => (int) $row->prompt_tokens,
                 'completion_tokens' => (int) $row->completion_tokens,
@@ -268,7 +269,9 @@ final class AiUsage
     /** @param  array<string, mixed>|null  $filters */
     private static function unscopedQuery(?array $filters): Builder
     {
+        // Un brouillon n'a jamais été envoyé : ni demande, ni tokens, ni coût.
         return AiInteraction::query()
+            ->where('status', '!=', AiInteraction::STATUS_DRAFT)
             ->when(self::since($filters), fn (Builder $query, Carbon $since) => $query->where('created_at', '>=', $since));
     }
 

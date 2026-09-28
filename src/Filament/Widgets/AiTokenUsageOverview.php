@@ -4,6 +4,7 @@ namespace CharlesStOlive\FilamentPrism\Filament\Widgets;
 
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Support\AiMoney;
+use Filament\Support\Facades\FilamentTimezone;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Facades\Auth;
@@ -21,9 +22,12 @@ class AiTokenUsageOverview extends StatsOverviewWidget
     protected function getStats(): array
     {
         $mine = fn () => AiInteraction::query()->where('user_id', Auth::id());
-        $month = [now()->startOfMonth(), now()->endOfMonth()];
+        // Le jour et le mois de l'utilisateur (son fuseau), en bornes UTC pour interroger la base.
+        $now = now(FilamentTimezone::get());
+        $utc = (string) config('app.timezone');
+        $month = [$now->copy()->startOfMonth()->setTimezone($utc), $now->copy()->endOfMonth()->setTimezone($utc)];
 
-        $today = $mine()->whereDate('created_at', today())->sum('total_tokens');
+        $today = $mine()->whereBetween('created_at', [$now->copy()->startOfDay()->setTimezone($utc), $now->copy()->endOfDay()->setTimezone($utc)])->sum('total_tokens');
         $thisMonth = $mine()->whereBetween('created_at', $month)->sum('total_tokens');
         $cost = $mine()->whereBetween('created_at', $month)->whereNotNull('cost_eur')->sum('cost_eur');
 

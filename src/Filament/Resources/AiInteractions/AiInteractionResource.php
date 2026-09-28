@@ -7,9 +7,14 @@ use CharlesStOlive\FilamentPrism\Filament\Resources\AiInteractions\Pages\ViewAiI
 use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
+use CharlesStOlive\FilamentPrism\States\Archived;
 use CharlesStOlive\FilamentPrism\Support\AiAccess;
 use CharlesStOlive\FilamentPrism\Support\AiMoney;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
+use CharlesStOlive\FilamentStateFusionEnhanced\Actions\StateFusionAction;
+use CharlesStOlive\FilamentStateFusionEnhanced\Tables\Filters\StateFusionSelectFilter;
+use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
 use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Resources\Resource;
@@ -18,6 +23,7 @@ use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use UnitEnum;
 
 /**
@@ -25,7 +31,8 @@ use UnitEnum;
  * d'hier (une « session » passée) — et, depuis l'une d'elles, son fil : la
  * demande et ses variantes (voir `ViewAiInteraction`, `AiInteractionList`).
  * On n'y crée rien : une demande part de là où elle a un sens (la
- * bibliothèque, un formulaire...).
+ * bibliothèque, un formulaire...). Les demandes archivées, qui ont quitté les
+ * listes de leur modèle, restent ici (voir `AiInteractionStatus`).
  *
  * Chacun n'y voit que ses demandes ; qui peut tout voir (voir `AiAccess`) voit
  * celles de tout le monde, avec leur auteur, et peut filtrer par personne.
@@ -79,11 +86,8 @@ class AiInteractionResource extends Resource
             ->columns([
                 TextColumn::make('created_at')->label('Date')->dateTime('d/m/Y H:i')->sortable(),
                 TextColumn::make('task')->label('Ressource')->formatStateUsing(fn (string $state): string => static::taskLabels()[$state] ?? $state),
-                TextColumn::make('status')
-                    ->label('Statut')
-                    ->badge()
-                    ->formatStateUsing(fn (string $state): string => AiInteraction::statusLabels()[$state] ?? $state)
-                    ->color(fn (string $state): string => AiInteraction::statusColor($state)),
+                // Libellé, couleur et icône viennent de l'état (`AiInteractionStatus`).
+                TextColumn::make('status')->label('Statut')->badge(),
                 TextColumn::make('user.name')->label('Par')->visible(fn (): bool => AiAccess::canSeeAll()),
                 TextColumn::make('total_tokens')->label('Tokens')->numeric()->sortable(),
                 TextColumn::make('model')->label('Modèle')->toggleable(isToggledHiddenByDefault: true),
@@ -106,7 +110,7 @@ class AiInteractionResource extends Resource
                     ->multiple()
                     ->visible(fn (): bool => AiAccess::canSeeAll()),
                 SelectFilter::make('task')->label('Ressource')->options(fn (): array => static::taskLabels())->multiple(),
-                SelectFilter::make('status')->label('Statut')->options(AiInteraction::statusLabels())->multiple(),
+                StateFusionSelectFilter::make('status')->label('Statut')->multiple(),
                 Filter::make('created_at')
                     ->schema([
                         DatePicker::make('from')->label('Depuis le'),
@@ -116,7 +120,33 @@ class AiInteractionResource extends Resource
                         ->when($data['from'] ?? null, fn (Builder $query, string $date) => $query->whereDate('created_at', '>=', $date))
                         ->when($data['until'] ?? null, fn (Builder $query, string $date) => $query->whereDate('created_at', '<=', $date))),
             ])
-            ->recordActions([ViewAction::make()->label('Voir')])
+            ->recordActions([
+                ViewAction::make()->label('Voir'),
+                // Libellé et icône viennent de la transition (`ToArchived`) ; cachée si la demande n'est pas terminée.
+                StateFusionAction::make('archive')
+                    ->attribute('status')
+                    ->transitionTo(Archived::class)
+                    ->requiresConfirmation(false)
+                    ->iconButton(),
+                Action::make('unarchive')
+                    ->label('Désarchiver')
+                    ->icon('heroicon-m-archive-box-x-mark')
+                    ->color('gray')
+                    ->iconButton()
+                    ->visible(fn (AiInteraction $record): bool => $record->isArchived())
+                    ->action(fn (AiInteraction $record) => $record->unarchive()),
+            ])
+            ->toolbarActions([
+                BulkAction::make('archive')
+                    ->label('Archiver')
+                    ->icon('heroicon-m-archive-box-arrow-down')
+                    ->color('gray')
+                    ->deselectRecordsAfterCompletion()
+                    // Seulement les demandes terminées : les autres restent où elles sont.
+                    ->action(fn (Collection $records) => $records
+                        ->filter(fn (AiInteraction $record): bool => $record->canBeArchived())
+                        ->each(fn (AiInteraction $record) => $record->archive())),
+            ])
             ->recordUrl(fn (AiInteraction $record): string => static::getUrl('view', ['record' => $record]));
     }
 

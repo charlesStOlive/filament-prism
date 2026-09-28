@@ -79,12 +79,16 @@ final class AiResultSchema
     public static function defaultInput(AiInteraction $interaction, ?AiResource $resource): array
     {
         $settings = $resource?->describeInput($interaction->input ?? []) ?? [];
+        // Un brouillon n'a pas encore de résultat, où se montrent d'habitude les images de départ : elles sont ici.
+        $sources = $interaction->isDraft() ? ($resource?->sourcePreviews($interaction) ?? []) : [];
+        $components = $sources === [] ? [] : [self::images('sources', count($sources) > 1 ? 'Images de départ' : 'Image de départ', array_column($sources, 'url'), '6rem')];
 
         if ($settings === []) {
-            return [];
+            return $components;
         }
 
         return [
+            ...$components,
             Grid::make(['default' => 2, 'md' => 4])->schema(collect($settings)
                 ->map(fn (string $value, string $label): TextEntry => TextEntry::make('setting_'.Str::slug($label, '_'))
                     ->label($label)

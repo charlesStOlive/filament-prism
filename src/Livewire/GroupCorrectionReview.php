@@ -2,10 +2,12 @@
 
 namespace CharlesStOlive\FilamentPrism\Livewire;
 
+use CharlesStOlive\FilamentPrism\Livewire\Concerns\ReviewsCorrection;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Services\CorrectionService;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubjectGroup;
 use CharlesStOlive\FilamentPrism\Support\GroupedTextDiffRenderer;
+use CharlesStOlive\FilamentPrism\Tasks\OrthographyTask;
 use Filament\Notifications\Notification;
 use Filament\Schemas\Components\Livewire as LivewireComponent;
 use Illuminate\Contracts\View\View;
@@ -22,33 +24,43 @@ use Livewire\Component;
  */
 class GroupCorrectionReview extends Component
 {
-    public int $interactionId;
+    use ReviewsCorrection;
 
     /** @var array<string, bool> */
     public array $applyItems = [];
 
     public static function forGroup(CorrectionSubjectGroup $group, string $taskKey = 'orthography', ?Model $trackable = null): LivewireComponent
     {
-        $interaction = app(CorrectionService::class)->correctGroup($group, $taskKey, $trackable);
+        $interaction = app(CorrectionService::class)->prepareGroup($group, $taskKey, $trackable);
 
-        return LivewireComponent::make(static::class, ['interactionId' => $interaction->getKey()])
-            ->key('filament-prism-group-correction-'.$interaction->getKey());
+        return static::forInteraction($interaction->getKey());
+    }
+
+    /** La revue d'une correction de groupe déjà demandée. */
+    public static function forInteraction(int $interactionId): LivewireComponent
+    {
+        return LivewireComponent::make(static::class, ['interactionId' => $interactionId])
+            ->key('filament-prism-group-correction-'.$interactionId);
     }
 
     public function mount(int $interactionId): void
     {
         $this->interactionId = $interactionId;
+        $this->mountFor($this->interaction());
+    }
 
-        $this->applyItems = collect($this->interaction()->output['items'] ?? [])
+    protected function mountFor(AiInteraction $interaction): void
+    {
+        $this->applyItems = collect($interaction->output['items'] ?? [])
             ->pluck('key')
             ->filter()
             ->mapWithKeys(fn (string $key): array => [$key => true])
             ->all();
     }
 
-    public function interaction(): AiInteraction
+    protected function nothingChangedMessage(): string
     {
-        return AiInteraction::findOrFail($this->interactionId);
+        return 'Aucun sujet n’a été modifié.';
     }
 
     public function applyAll(): void
@@ -74,6 +86,11 @@ class GroupCorrectionReview extends Component
     {
         $interaction = $this->interaction();
 
+        // Déjà appliquée ou ignorée (un second clic parti avant le redessin) : rien à refaire.
+        if (! $interaction->isStatus(AiInteraction::STATUS_PENDING)) {
+            return;
+        }
+
         $values = collect($interaction->output['items'] ?? [])
             ->filter(fn (array $item): bool => in_array($item['key'] ?? null, $onlyKeys, true))
             ->mapWithKeys(fn (array $item): array => [$item['key'] => collect($item)->except('key')->all()])
@@ -83,13 +100,6 @@ class GroupCorrectionReview extends Component
         $this->dispatch('filament-prism:group-correction-applied', interactionId: $interaction->getKey(), values: $values);
 
         Notification::make()->title('Correction appliquée')->success()->send();
-    }
-
-    public function discard(): void
-    {
-        app(CorrectionService::class)->discard($this->interaction());
-
-        Notification::make()->title('Correction ignorée')->body('Aucun sujet n’a été modifié.')->warning()->send();
     }
 
     public function render(): View
@@ -102,7 +112,9 @@ class GroupCorrectionReview extends Component
             ->all();
 
         return view('filament-prism::livewire.group-correction-review', [
-            'rendererView' => app(GroupedTextDiffRenderer::class)->render($interaction, $inputByKey),
+            'rendererView' => $interaction->hasResult() ? app(GroupedTextDiffRenderer::class)->render($interaction, $inputByKey) : null,
+            'interaction' => $interaction,
+            'draftSubjects' => $interaction->isDraft() ? OrthographyTask::draftSubjects($interaction) : [],
         ]);
     }
 }

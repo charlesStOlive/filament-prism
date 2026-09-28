@@ -9,8 +9,9 @@ use Illuminate\Database\Eloquent\Model;
 /**
  * Les demandes IA (`AiInteractionList`) dans le volet latéral de filament-ui
  * (`HasSidePane`), posé à côté du formulaire : on les suit et on les vérifie
- * sans quitter la page. Les deux autres affichages — modale, slide-over — sont
- * `AiInteractionsAction`.
+ * sans quitter la page. Le plus simple est de le laisser construire par
+ * `AiInteractionsAction` (`->display(AiInteractionsDisplay::SidePane)`,
+ * `->toSidePane()`), qui ouvre aussi la modale et le slide-over.
  *
  *     AiInteractionsSidePane::NAME => AiInteractionsSidePane::make($this->record, tasks: ['photo-sketch'])
  *
@@ -30,7 +31,7 @@ class AiInteractionsSidePane
         return SidePane::make(self::NAME)
             ->label('Demandes IA')
             ->icon('heroicon-o-sparkles')
-            ->schema([AiInteractionList::make($trackable, $tasks)]);
+            ->schema([AiInteractionList::make($trackable, $tasks, layout: AiInteractionList::LAYOUT_PANE)]);
     }
 
     /** @param  array<int, string>  $tasks */

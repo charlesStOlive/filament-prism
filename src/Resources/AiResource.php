@@ -6,6 +6,7 @@ use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Services\AiRunner;
 use CharlesStOlive\FilamentPrism\Support\TextDiffRenderer;
 use CharlesStOlive\FilamentPrism\Tasks\AiTask;
+use Filament\Forms\Components\Textarea;
 use Filament\Schemas\Components\Component;
 use Illuminate\Support\Str;
 use LogicException;
@@ -14,6 +15,7 @@ use Prism\Prism\Schema\ObjectSchema;
 use Prism\Prism\Structured\PendingRequest as StructuredRequest;
 use Prism\Prism\Text\PendingRequest as TextRequest;
 use Prism\Prism\Tool;
+use Prism\Prism\ValueObjects\Media\Image;
 use Prism\Prism\ValueObjects\Media\Media;
 
 /**
@@ -67,10 +69,19 @@ use Prism\Prism\ValueObjects\Media\Media;
  *   Filament, le plus souvent des `TextEntry` ; sans eux, une grille par défaut
  *   (voir `AiResultSchema`), nourrie par `sourcePreviews()` (les images de
  *   départ) et `describeInput()` (les réglages, lisibles).
- * - `applyResultLabel()` / `applyResult()` — ce que devient un résultat
- *   accepté (une image ajoutée à une bibliothèque...), depuis la page
- *   « Demandes IA ». Sans libellé, un résultat ne s'accepte pas : il se
- *   consulte, s'ignore ou se refait.
+ *
+ * **Le cycle d'une demande** (voir `AiInteractionStatus`), une méthode par
+ * transition, chacune avec un comportement par défaut :
+ * - Soumettre — toute demande naît brouillon ; `interactionContext()` rend ce
+ *   que l'appel a besoin de savoir en plus, lu dans la demande elle-même (le
+ *   brouillon peut être soumis d'ailleurs que de là où il est né).
+ * - Accepter — `canAccept()`, `acceptLabel()`, `acceptSchema()`, `accept()` :
+ *   par défaut le résultat est simplement accepté ; une ressource qui sait
+ *   l'appliquer (une image ajoutée à une bibliothèque...) le fait là.
+ * - Affiner — `canRefine()`, `refineSchema()`, `refinePrompt()`,
+ *   `refineAttachments()` : une nouvelle version, avec d'autres réglages et/ou
+ *   ce qui ne va pas ; l'IA reçoit sa réponse précédente et la remarque.
+ * - Ignorer, Relancer, Archiver, Désarchiver : communs à toutes.
  */
 abstract class AiResource implements AiTask
 {
@@ -300,21 +311,103 @@ abstract class AiResource implements AiTask
             ->all();
     }
 
-    /** Le libellé du bouton qui accepte un résultat ; `null` : un résultat ne s'accepte pas. */
-    public function applyResultLabel(): ?string
+    // ── Soumettre ────────────────────────────────────────────────────────
+
+    /**
+     * Ce que l'appel doit savoir en plus de l'entrée, lu dans la demande elle-même (`meta`...) :
+     * un brouillon peut être soumis, ou une demande affinée, depuis une autre requête que celle
+     * où il est né — ce que l'appelant savait alors (`$context` d'`AiRunner::run()`) n'y est plus.
+     *
+     * @return array<string, mixed>
+     */
+    public function interactionContext(AiInteraction $interaction): array
+    {
+        return [];
+    }
+
+    // ── Accepter ─────────────────────────────────────────────────────────
+
+    /** Ce résultat peut-il être accepté d'ici (une carte de « Demandes IA ») ? */
+    public function canAccept(AiInteraction $interaction): bool
+    {
+        return true;
+    }
+
+    /** Le libellé du bouton — « Ajouter à la bibliothèque » pour une ressource qui applique son résultat. */
+    public function acceptLabel(): string
+    {
+        return 'Accepter';
+    }
+
+    /**
+     * Ce qu'on choisit en acceptant (la période où ranger une image...) ; `null` : on accepte d'un clic.
+     *
+     * @return array<int, Component>|null
+     */
+    public function acceptSchema(AiInteraction $interaction): ?array
     {
         return null;
     }
 
     /**
-     * Accepte le résultat d'une demande — à la ressource de le marquer
-     * `applied` (`AiInteraction::markApplied()`) une fois fait.
+     * Accepte le résultat. Par défaut, il est seulement accepté ; une ressource qui l'applique
+     * quelque part le fait ici, puis le marque (`AiInteraction::markApplied()`).
      *
+     * @param  array<string, mixed>  $data  Ce qu'on a choisi dans `acceptSchema()`.
      * @return string|null Le message de la notification de succès.
      */
-    public function applyResult(AiInteraction $interaction): ?string
+    public function accept(AiInteraction $interaction, array $data = []): ?string
     {
-        throw new LogicException(static::class.' n’a pas de résultat à accepter (applyResult()).');
+        $interaction->markAccepted();
+
+        return null;
+    }
+
+    // ── Affiner ──────────────────────────────────────────────────────────
+
+    public function canRefine(AiInteraction $interaction): bool
+    {
+        return true;
+    }
+
+    /**
+     * Le formulaire d'« Affiner », rempli avec l'entrée de la demande : ses réglages
+     * (`inputSchema()`), et ce qui ne va pas (`feedback`).
+     *
+     * @return array<int, Component>
+     */
+    public function refineSchema(AiInteraction $interaction): array
+    {
+        return [
+            ...($this->inputSchema() ?? []),
+            Textarea::make('feedback')
+                ->label('Ce qui ne va pas')
+                ->placeholder('Facultatif — par exemple : « le ciel est trop sombre », « garde le tutoiement ».')
+                ->rows(3)
+                ->maxLength(2000)
+                ->columnSpanFull(),
+        ];
+    }
+
+    /** Le message qui suit la réponse précédente, quand on affine avec une remarque. */
+    public function refinePrompt(string $feedback): string
+    {
+        return "Ta réponse précédente ne convient pas tout à fait. Voici ce qui ne va pas :\n\n{$feedback}\n\nRefais-la en en tenant compte, dans le même format.";
+    }
+
+    /**
+     * Les images à retravailler quand on affine une ressource d'image : par défaut, celles que la
+     * version précédente a produites. Vide : les pièces jointes d'origine (`attachments()`).
+     *
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $context
+     * @return array<int, Media>
+     */
+    public function refineAttachments(AiInteraction $previous, array $input, array $context): array
+    {
+        return collect($previous->images())
+            ->map(fn (array $image): Image => Image::fromStoragePath($image['path'], $image['disk']))
+            ->all();
     }
 
     /**

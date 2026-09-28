@@ -6,6 +6,7 @@ use CharlesStOlive\FilamentPrism\Filament\Resources\AiInteractions\AiInteraction
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Support\AiUsage;
 use Filament\Support\RawJs;
+use Filament\Support\Facades\FilamentTimezone;
 use Filament\Widgets\ChartWidget;
 use Filament\Widgets\Concerns\InteractsWithPageFilters;
 use Illuminate\Support\Carbon;
@@ -44,13 +45,15 @@ class AiUsageChart extends ChartWidget
 
     protected function getData(): array
     {
+        // Les jours du graphique sont ceux de l'utilisateur (son fuseau), pas ceux d'UTC.
+        $timezone = FilamentTimezone::get();
         $interactions = AiUsage::query($this->pageFilters)->get(['task', 'created_at']);
-        $since = Carbon::parse(AiUsage::since($this->pageFilters) ?? $interactions->min('created_at') ?? now())->startOfDay();
+        $since = Carbon::parse(AiUsage::since($this->pageFilters) ?? $interactions->min('created_at') ?? now())->setTimezone($timezone)->startOfDay();
         $monthly = $since->diffInDays(now()) > 92;
         $format = $monthly ? 'Y-m' : 'Y-m-d';
 
         $buckets = collect();
-        for ($date = $monthly ? $since->copy()->startOfMonth() : $since->copy(); $date <= now(); $monthly ? $date->addMonth() : $date->addDay()) {
+        for ($date = $monthly ? $since->copy()->startOfMonth() : $since->copy(); $date <= now($timezone); $monthly ? $date->addMonth() : $date->addDay()) {
             $buckets->push($date->format($format));
         }
 
@@ -68,7 +71,7 @@ class AiUsageChart extends ChartWidget
                     'label' => $labels[$task] ?? $task,
                     'slot' => ($slots[$task] ?? count($slots)) % count(self::LIGHT),
                     'data' => $buckets
-                        ->map(fn (string $bucket): int => $items->filter(fn (AiInteraction $interaction): bool => $interaction->created_at->format($format) === $bucket)->count())
+                        ->map(fn (string $bucket): int => $items->filter(fn (AiInteraction $interaction): bool => $interaction->created_at->setTimezone($timezone)->format($format) === $bucket)->count())
                         ->all(),
                 ])
                 ->values()

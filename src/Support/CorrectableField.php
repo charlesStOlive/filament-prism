@@ -179,4 +179,29 @@ class CorrectableField
     {
         return collect($fields)->mapWithKeys(fn (self $field): array => [$field->name => $field->getLabel()])->all();
     }
+
+    /**
+     * Les champs, tels qu'une demande les garde (`meta.fields`) : un brouillon peut être soumis, ou
+     * une correction affinée, dans une autre requête que celle où ils ont été déclarés.
+     *
+     * @param  array<int, CorrectableField>  $fields
+     * @return array<int, array{name: string, label: string, html: bool}>
+     */
+    public static function toMeta(array $fields): array
+    {
+        return array_map(fn (self $field): array => ['name' => $field->name, 'label' => $field->getLabel(), 'html' => $field->isHtml()], array_values($fields));
+    }
+
+    /**
+     * @param  array<int, array{name?: string, label?: string, html?: bool}>  $meta
+     * @return array<int, CorrectableField>
+     */
+    public static function fromMeta(array $meta): array
+    {
+        return collect($meta)
+            ->filter(fn (mixed $field): bool => is_array($field) && is_string($field['name'] ?? null))
+            ->map(fn (array $field): self => static::make($field['name'])->label((string) ($field['label'] ?? Str::headline($field['name'])))->html((bool) ($field['html'] ?? false)))
+            ->values()
+            ->all();
+    }
 }

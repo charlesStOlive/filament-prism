@@ -4,6 +4,7 @@ namespace CharlesStOlive\FilamentPrism\Filament\Actions;
 
 use CharlesStOlive\FilamentPrism\Filament\Actions\Concerns\InteractsWithCorrectionTask;
 use CharlesStOlive\FilamentPrism\Livewire\CorrectionReview;
+use CharlesStOlive\FilamentPrism\Services\CorrectionService;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubject;
 use Closure;
 use Filament\Actions\Action;
@@ -68,11 +69,10 @@ class CorrectionAction extends Action
     {
         parent::setUp();
 
-        $this->setUpCorrectionModal('Orthographe', fn () => CorrectionReview::forSubject(
-            $this->getSubject(),
-            $this->getTaskKey(),
-            $this->getTrackable(),
-            $this->evaluate($this->autoApply),
-        ));
+        $this->setUpCorrectionModal(
+            'Orthographe',
+            fn () => app(CorrectionService::class)->prepare($this->getSubject(), $this->getTaskKey(), $this->getTrackable()),
+            fn (int $interactionId) => CorrectionReview::forInteraction($interactionId, $this->evaluate($this->autoApply)),
+        );
     }
 }

@@ -4,6 +4,7 @@ namespace CharlesStOlive\FilamentPrism\Filament\Actions;
 
 use CharlesStOlive\FilamentPrism\Filament\Actions\Concerns\InteractsWithCorrectionTask;
 use CharlesStOlive\FilamentPrism\Livewire\GroupCorrectionReview;
+use CharlesStOlive\FilamentPrism\Services\CorrectionService;
 use CharlesStOlive\FilamentPrism\Support\CorrectionSubjectGroup;
 use Closure;
 use Filament\Actions\Action;
@@ -56,10 +57,10 @@ class GroupCorrectionAction extends Action
     {
         parent::setUp();
 
-        $this->setUpCorrectionModal('Corriger tout', fn () => GroupCorrectionReview::forGroup(
-            $this->getSubjectGroup(),
-            $this->getTaskKey(),
-            $this->getTrackable(),
-        ));
+        $this->setUpCorrectionModal(
+            'Corriger tout',
+            fn () => app(CorrectionService::class)->prepareGroup($this->getSubjectGroup(), $this->getTaskKey(), $this->getTrackable()),
+            fn (int $interactionId) => GroupCorrectionReview::forInteraction($interactionId),
+        );
     }
 }

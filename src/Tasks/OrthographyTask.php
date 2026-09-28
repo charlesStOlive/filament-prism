@@ -2,10 +2,15 @@
 
 namespace CharlesStOlive\FilamentPrism\Tasks;
 
+use CharlesStOlive\FilamentPrism\Concerns\Correctable;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Resources\AiResource;
+use CharlesStOlive\FilamentPrism\Services\CorrectionService;
 use CharlesStOlive\FilamentPrism\Support\CorrectableField;
+use CharlesStOlive\FilamentPrism\Support\GroupedTextDiffRenderer;
+use CharlesStOlive\FilamentPrism\Support\WordDiff;
 use Filament\Schemas\Components\Html;
+use Illuminate\Database\Eloquent\Model;
 use Prism\Prism\Schema\ObjectSchema;
 
 /**
@@ -13,10 +18,15 @@ use Prism\Prism\Schema\ObjectSchema;
  * déclarés `correctable` sur un modèle, sans changer le sens ni le ton.
  *
  * Pas de formulaire d'entrée : le texte vient du `CorrectionSubject` passé
- * par `CorrectionService`, avec ses champs dans le contexte
- * (`context['fields']`, et `context['grouped']` pour plusieurs sujets en un
- * appel). La réception est la revue de correction (`CorrectionReview`), pas
- * un formulaire : ni `receptionSchema()` ni `apply()`.
+ * par `CorrectionService`, avec ses champs, gardés dans la demande
+ * (`meta.fields`, `meta.grouped` pour plusieurs sujets en un appel) pour
+ * qu'un brouillon se soumette, ou une correction s'affine, de n'importe où
+ * (`interactionContext()`). La réception est la revue de correction
+ * (`CorrectionReview`), pas un formulaire : ni `receptionSchema()` ni `apply()`.
+ *
+ * Un brouillon montre les textes qui partiront ; « Accepter » depuis une carte
+ * n'est proposé que quand la correction sait s'écrire seule (un modèle
+ * `Correctable`) — un texte hors modèle s'applique depuis sa revue.
  */
 class OrthographyTask extends AiResource
 {
@@ -52,7 +62,80 @@ class OrthographyTask extends AiResource
     /** Dans « Demandes IA » aussi, le diff « Avant / Après » de la revue, plutôt qu'une grille des textes corrigés. */
     public function resultSchema(AiInteraction $interaction): array
     {
-        return [Html::make(fn () => app($this->rendererClass())->render($interaction)->render())];
+        return [Html::make(fn () => $this->isGrouped($interaction)
+            ? app(GroupedTextDiffRenderer::class)->render($interaction, collect($interaction->input['items'] ?? [])->filter(fn ($item): bool => isset($item['key']))->keyBy('key')->all())->render()
+            : app($this->rendererClass())->render($interaction)->render())];
+    }
+
+    /** Un brouillon : les textes qui partiront. Ensuite, le diff les montre déjà. */
+    public function inputDisplaySchema(AiInteraction $interaction): array
+    {
+        if (! $interaction->isDraft()) {
+            return [];
+        }
+
+        return [Html::make(fn () => view('filament-prism::livewire.partials.correction-draft', [
+            'subjects' => self::draftSubjects($interaction),
+        ])->render())];
+    }
+
+    /**
+     * Les textes d'un brouillon, par sujet (un seul hors groupe), leurs champs dans l'ordre déclaré.
+     *
+     * @return array<int, array{key: string|null, fields: array<int, array{label: string, text: string}>}>
+     */
+    public static function draftSubjects(AiInteraction $interaction): array
+    {
+        $fields = CorrectableField::fromMeta((array) ($interaction->meta['fields'] ?? []));
+        $labels = (array) ($interaction->meta['labels'] ?? []);
+        $items = isset($interaction->input['items']) ? (array) $interaction->input['items'] : [$interaction->input ?? []];
+        $names = $fields === [] ? null : array_map(fn (CorrectableField $field): string => $field->name, $fields);
+
+        return collect($items)
+            ->map(fn (array $item): array => [
+                'key' => isset($item['key']) ? (string) $item['key'] : null,
+                'fields' => collect($names ?? array_keys(array_diff_key($item, ['key' => true])))
+                    ->map(fn (string $name): array => ['label' => (string) ($labels[$name] ?? $name), 'text' => WordDiff::textOf($item[$name] ?? '')])
+                    ->filter(fn (array $field): bool => $field['text'] !== '')
+                    ->values()
+                    ->all(),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /** @return array{fields: array<int, CorrectableField>, grouped: bool} */
+    public function interactionContext(AiInteraction $interaction): array
+    {
+        return ['fields' => CorrectableField::fromMeta((array) ($interaction->meta['fields'] ?? [])), 'grouped' => $this->isGrouped($interaction)];
+    }
+
+    /** Seulement quand la correction s'écrit seule dans son modèle (`Correctable`) ; sinon, depuis sa revue. */
+    public function canAccept(AiInteraction $interaction): bool
+    {
+        $correctable = $interaction->correctable;
+
+        return ! $this->isGrouped($interaction)
+            && $correctable instanceof Model
+            && in_array(Correctable::class, class_uses_recursive($correctable), true);
+    }
+
+    public function acceptLabel(): string
+    {
+        return 'Appliquer';
+    }
+
+    public function accept(AiInteraction $interaction, array $data = []): ?string
+    {
+        app(CorrectionService::class)->apply($interaction);
+
+        return 'Correction appliquée';
+    }
+
+    private function isGrouped(AiInteraction $interaction): bool
+    {
+        // Les demandes d'avant `meta.grouped` se reconnaissent à leur liste de sujets.
+        return (bool) ($interaction->meta['grouped'] ?? isset($interaction->input['items']));
     }
 
     /**

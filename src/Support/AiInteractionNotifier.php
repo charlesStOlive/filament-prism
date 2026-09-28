@@ -32,7 +32,7 @@ class AiInteractionNotifier
         }
 
         $resource = $this->tasks->resource($interaction->task);
-        $failed = $interaction->status === AiInteraction::STATUS_FAILED;
+        $failed = $interaction->isStatus(AiInteraction::STATUS_FAILED);
 
         $notification = Notification::make()
             ->title($resource->label().($failed ? ' : échec' : ' : prêt'))

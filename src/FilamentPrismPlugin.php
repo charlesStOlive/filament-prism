@@ -2,6 +2,7 @@
 
 namespace CharlesStOlive\FilamentPrism;
 
+use CharlesStOlive\FilamentPrism\Enums\AiInteractionsDisplay;
 use CharlesStOlive\FilamentPrism\Filament\Pages\AiUsageStats;
 use CharlesStOlive\FilamentPrism\Filament\Resources\AiInteractions\AiInteractionResource;
 use Closure;
@@ -25,6 +26,11 @@ use Illuminate\Contracts\Auth\Authenticatable;
  *
  * Sans cette règle, c'est l'ability `filament-prism.see-all-requests` qui
  * décide (voir `Support\AiAccess`).
+ *
+ * Où s'ouvrent les demandes IA d'un modèle, par défaut (chaque
+ * `AiInteractionsAction` peut le changer) :
+ *
+ *     FilamentPrismPlugin::make()->interactionsDisplay(AiInteractionsDisplay::SlideOver)
  */
 class FilamentPrismPlugin implements Plugin
 {
@@ -33,6 +39,8 @@ class FilamentPrismPlugin implements Plugin
     protected ?string $navigationGroup = null;
 
     protected ?Closure $seeAllRequestsUsing = null;
+
+    protected AiInteractionsDisplay $interactionsDisplay = AiInteractionsDisplay::Modal;
 
     public static function make(): static
     {
@@ -74,6 +82,18 @@ class FilamentPrismPlugin implements Plugin
     public function canSeeAllRequests(Authenticatable $user): ?bool
     {
         return $this->seeAllRequestsUsing === null ? null : (bool) ($this->seeAllRequestsUsing)($user);
+    }
+
+    public function interactionsDisplay(AiInteractionsDisplay $display): static
+    {
+        $this->interactionsDisplay = $display;
+
+        return $this;
+    }
+
+    public function getInteractionsDisplay(): AiInteractionsDisplay
+    {
+        return $this->interactionsDisplay;
     }
 
     public function register(Panel $panel): void

@@ -41,7 +41,8 @@ projet (voir `desapp/composer.json`, section `repositories`) :
 ```json
 {
     "repositories": [
-        {"type": "path", "url": "../packages_filament/filament-prism"}
+        {"type": "path", "url": "../packages_filament/filament-prism"},
+        {"type": "path", "url": "../packages_filament/filament-state-fusion-enhanced"}
     ],
     "require": {
         "charlesstolive/filament-prism": "dev-master",
@@ -49,6 +50,9 @@ projet (voir `desapp/composer.json`, section `repositories`) :
     }
 }
 ```
+
+filament-prism dépend de `charlesstolive/filament-state-fusion-enhanced` (les
+états des demandes) : hors Packagist lui aussi, l'application déclare son dépôt.
 
 ```bash
 sail composer update charlesstolive/filament-prism prism-php/prism
@@ -84,9 +88,9 @@ Colonnes notables :
 | `subject_key` | Distingue plusieurs sujets rattachés au même modèle (ex. plusieurs périodes d'un même voyage). `null` quand le modèle seul suffit à identifier le sujet. |
 | `trackable_type`/`trackable_id` | Le périmètre d'agrégation pour les widgets de tokens (ex. le voyage entier), indépendant du modèle d'attache. |
 | `input`/`output` | Les valeurs envoyées, et la réponse structurée de l'IA (déjà décodée par Prism, pas de regex). |
-| `status` | `queued` → `running` (une demande mise en file) → `pending` (résultat à vérifier) → `applied`/`discarded` ; ou `failed`. Rien n'est supprimé au clic « ignorer » : l'historique reste consultable. |
+| `status` | Un état Spatie (`AiInteractionStatus`, voir « États et archivage ») : `queued` → `running` → `pending` (résultat à vérifier) → `accepted`/`discarded` ; ou `failed` ; une demande terminée peut être `archived`. Rien n'est supprimé au clic « ignorer » : l'historique reste consultable. |
 | `started_at`/`finished_at`, `error`, `cost` | La durée de l'appel, le message (sûr à montrer) d'un échec, et le coût, calculé à l'appel d'après `filament-prism.pricing` (`AiCost`) — figé, un changement de tarif ne réécrit pas l'historique. |
-| `thread_id`/`parent_interaction_id` | Un fil : une demande et ses variantes (« Refaire » avec d'autres réglages, « Relancer » après un échec — `AiRunner::rerun()`). Prism sait aussi rejouer un historique de messages (`withMessages()`) : les mêmes colonnes serviront à un vrai dialogue multi-tours. |
+| `thread_id`/`parent_interaction_id` | Un fil : une demande et ses versions (« Affiner » avec d'autres réglages et/ou une remarque, « Relancer » après un échec — `AiRunner::refine()`). Affiner avec une remarque rejoue la conversation (`withMessages()` : la demande, la réponse précédente, la remarque). |
 | `meta` (json) | Ce dont un renderer a besoin sans connaître le `CorrectionSubject` d'origine (il ne survit pas à la requête qui a appelé l'IA) : `meta.labels` porte le libellé de chaque champ (`CorrectableField::labelsByName()`), utilisé par `TextDiffRenderer`/`GroupedTextDiffRenderer` — sans ça, `CorrectableField::make('body')->label('Contenu')` n'aurait aucun effet visible, la vue régénérant un libellé générique (`Str::headline($field)`) faute d'accès à la déclaration d'origine. Un futur `ChoiceRenderer` y noterait par exemple l'option choisie. |
 
 ### `AiResource` — une ressource IA
@@ -165,7 +169,10 @@ envoyer, à quel modèle rattacher la réponse, comment l'y écrire. L'appel
 lui-même passe par `AiRunner`, comme pour toute ressource.
 
 ```php
-$interaction = app(CorrectionService::class)->correct($subject, taskKey: 'orthography', trackable: $voyage);
+$draft = app(CorrectionService::class)->prepare($subject, taskKey: 'orthography', trackable: $voyage); // brouillon, rien d'envoyé
+$interaction = app(CorrectionService::class)->submit($draft);                                        // l'appel
+$better = app(CorrectionService::class)->refine($interaction, 'Garde le tutoiement.');              // nouvelle version du fil
+$interaction = app(CorrectionService::class)->correct($subject);                                     // préparer + soumettre d'un coup
 
 // Seulement valable quand $subject est un modèle Correctable (voir plus bas) :
 app(CorrectionService::class)->apply($interaction, onlyFields: ['title']); // écrit + save()
@@ -301,7 +308,7 @@ CorrectionAction::make()
 ```
 
 Avec `autoApply(false)`, « Appliquer » ne fait que marquer l'interaction
-`applied` et envoyer les valeurs choisies via l'événement Livewire
+acceptée (et appliquée : `applied_at`) et envoyer les valeurs choisies via l'événement Livewire
 `filament-prism:correction-applied` — à charge de la page qui a ouvert
 l'action de les écrire (et de décider si/quand les persister) :
 
@@ -446,7 +453,8 @@ ressource retrouve le reste dans `context()`.
 
 ```php
 app(AiRunner::class)->queue($resource, ['media_ids' => [12]], trackable: $voyage);
-app(AiRunner::class)->rerun($interaction, ['quality' => 'high']); // même fil, autres réglages
+app(AiRunner::class)->refine($interaction, 'Le ciel est trop sombre.', ['quality' => 'high']); // même fil
+app(AiRunner::class)->draft($resource, $input);   // un brouillon, qu'on soumettra : AiRunner::submit($draft)
 ```
 
 Une seule tentative (`tries = 1`) : relancer tout seul un appel, c'est risquer
@@ -472,9 +480,8 @@ tête du prompt.
 Ce que « Demandes IA » montre et permet d'une demande, la ressource le dit :
 `resultSchema()`/`inputDisplaySchema()` (voir plus bas), `sourcePreviews()`
 (les images de départ), `describeInput()` (les réglages, lisibles),
-`applyResultLabel()`/`applyResult()` (accepter un résultat — ex.
-l'ajouter à une bibliothèque ; sans libellé, un résultat se consulte, s'ignore
-ou se refait seulement), `resultUrl()` (où mène la notification).
+les méthodes du cycle (voir « États et archivage » : accepter, affiner),
+`resultUrl()` (où mène la notification).
 
 `AiResourceAction` sait aussi lancer une ressource mise en file : sa modale ne
 montre que le formulaire d'entrée et se ferme à l'envoi
@@ -493,7 +500,9 @@ montre que le formulaire d'entrée et se ferme à l'envoi
 
 - **Demandes IA** (`AiInteractionResource`) : les demandes (ressource, statut,
   dates) ; une demande s'ouvre sur son fil — ses variantes, chacune avec son
-  résultat et ses boutons (« Accepter », « Ignorer », « Refaire », « Relancer »).
+  résultat et ses actions (« Soumettre », « Accepter », « Affiner »,
+  « Ignorer », « Relancer », « Archiver », « Désarchiver »). Les demandes archivées y restent ; filtre
+  par état, archivage en masse des demandes terminées.
 - **Consommation IA** (`AiUsageStats`) : sa propre consommation (tokens du
   jour, du mois, coût du mois), ce que les fournisseurs ont facturé, puis, par
   ressource, par utilisateur et par modèle sur une période : demandes, échecs,
@@ -535,19 +544,97 @@ sert la vérifie ainsi :
 ### Afficher les demandes : modale, slide-over, volet
 
 La même liste (`AiInteractionList`, une carte `AiInteractionCard` par demande,
-les plus récentes d'abord), trois façons de l'ouvrir :
+les plus récentes d'abord), ouverte par un seul bouton, `AiInteractionsAction`,
+là où on le règle :
 
 ```php
-AiInteractionsAction::make()                                        // modale : toutes mes demandes
-AiInteractionsAction::make()->trackable($this->record)->slideOver() // slide-over : celles de ce voyage
-AiInteractionsSidePane::make($this->record, tasks: ['photo-sketch']) // volet latéral de filament-ui (HasSidePane)
+use CharlesStOlive\FilamentPrism\Enums\AiInteractionsDisplay;
+
+AiInteractionsAction::make()                                         // toutes mes demandes
+AiInteractionsAction::make()
+    ->trackable($this->record)                                       // celles de ce voyage…
+    ->tasks(['photo-sketch'])                                        // …pour ces ressources
+    ->display(AiInteractionsDisplay::SlideOver);                     // Modal, SlideOver ou SidePane
+
+FilamentPrismPlugin::make()->interactionsDisplay(AiInteractionsDisplay::SlideOver); // le défaut du panel (sinon : Modal)
 ```
 
-`trackable` restreint à ce qui a été demandé pour un modèle, `tasks` à
-certaines ressources ; sans l'un ni l'autre : toutes ses demandes. Le bouton
-de `AiInteractionsAction` porte le nombre de demandes en cours. Une carte se
+En volet (`SidePane`, le volet latéral de filament-ui, à côté du formulaire),
+la page doit avoir des volets (`HasSidePane`) et y déclarer celui-ci — la même
+action le construit, pour que bouton et volet montrent les mêmes demandes ;
+une page sans volets ouvre un slide-over :
+
+```php
+private function aiInteractionsAction(): AiInteractionsAction
+{
+    return AiInteractionsAction::make()->trackable($this->record)->display(AiInteractionsDisplay::SidePane);
+}
+
+protected function getSidePanes(): array
+{
+    return [AiInteractionsSidePane::NAME => $this->aiInteractionsAction()->toSidePane()];
+}
+
+protected function getHeaderActions(): array
+{
+    return [$this->aiInteractionsAction()];
+}
+```
+
+`trackable` restreint à ce qui a été demandé pour un modèle, **sans les
+demandes archivées** ; `tasks` à certaines ressources ; sans l'un ni l'autre :
+toutes ses demandes. Le bouton porte le nombre de demandes en cours. Dans un
+contenant qui a déjà son cadre (modale, slide-over, volet), les demandes sont
+des lignes séparées d'un filet ; seules, sur la page d'un fil, des cartes
+(`AiInteractionList::LAYOUT_*`). Une carte se
 redessine seule toutes les 5 s tant que sa demande tourne ; la liste, quand une
 demande part ou aboutit sur la page (`AiInteractionList::CHANGED_EVENT`).
+
+### États et archivage (`AiInteractionStatus`)
+
+`status` est un état [spatie/laravel-model-states](https://github.com/spatie/laravel-model-states),
+affiché avec charlesstolive/filament-state-fusion-enhanced (libellé, couleur,
+icône de chaque état ; filtre par état et action « Archiver » dans « Demandes IA ») :
+
+```
+draft -> queued | running                  (Soumettre)
+queued -> running -> pending | failed
+pending -> accepted | discarded | refined  (Accepter, Ignorer, Affiner)
+accepted | discarded | refined | failed -> archived -> (l'issue d'avant)
+```
+
+- **Brouillon** : toute demande naît là (`AiRunner::draft()`), rien n'est payé
+  avant `AiRunner::submit()`. Un sujet identifié n'a qu'un brouillon par
+  personne, repris avec l'entrée du jour ; un brouillon jamais envoyé se
+  supprime pour de bon. `run()`/`queue()` préparent et soumettent d'un coup ;
+  la correction, elle, s'ouvre sur son brouillon (les textes qui partiront).
+- **Acceptée** est l'issue positive de toute demande. Une ressource qui sait
+  appliquer son résultat quelque part le fait dans `accept()` (ex. « Ajouter à
+  la bibliothèque ») : `markApplied()` = acceptée + `applied_at`. Sinon,
+  `markAccepted()`.
+- **Affinée** : une nouvelle version la remplace dans le fil
+  (`AiRunner::refine()`) ; la remarque est gardée dans `meta.feedback` de la
+  nouvelle version. Une version acceptée ou ignorée qu'on affine le reste.
+
+Chaque ressource dit ce que font les transitions chez elle, une méthode par
+transition, toutes avec un comportement par défaut :
+
+| Transition | `AiResource` |
+|---|---|
+| Soumettre | `interactionContext()` — ce que l'appel doit relire dans la demande (un brouillon se soumet d'ailleurs que là où il est né) |
+| Accepter | `canAccept()`, `acceptLabel()`, `acceptSchema()` (un choix avant d'accepter), `accept()` |
+| Affiner | `canRefine()`, `refineSchema()` (réglages + « Ce qui ne va pas »), `refinePrompt()`, `refineAttachments()` (image : celle qu'on avait obtenue) |
+| Ignorer, Relancer, Archiver, Désarchiver | communs |
+
+Sur une carte (`AiInteractionCard`), l'étape naturelle est un bouton
+(Soumettre, Accepter, Relancer, Désarchiver), le reste un menu ⋯.
+- **Archivée** range une demande terminée : elle quitte les listes d'un modèle
+  (`trackable`), reste dans « Demandes IA » et dans son fil. `archived_from`
+  garde son issue — les statistiques la comptent avec elle, et « Désarchiver »
+  y revient. `archive()`, `unarchive()`, `canBeArchived()`, `scopeNotArchived()`.
+- Les valeurs en base sont les noms des états (`AiInteraction::STATUS_*`) : une
+  requête filtre toujours sur `status = 'pending'`. En PHP, `$interaction->status`
+  est un objet : `$interaction->isStatus(AiInteraction::STATUS_PENDING)`.
 
 ### L'affichage d'une demande : piloté par la ressource
 
@@ -641,8 +728,10 @@ Une application qui utilise déjà le package republie ses migrations et migre :
 `finished_at`, `error` et `cost` ; `add_billing_to_ai_interactions_table`
 ajoute `kind`, `currency`, `cost_eur` et les tables `ai_billed_costs`,
 `ai_exchange_rates` ; `increase_ai_cost_precision` passe les coûts à 8
-décimales. `AiRunner` écrit ces colonnes à chaque appel, **même
-synchrone** : sans ces migrations, tout appel échoue. La config passe de
+décimales ; `add_archiving_to_ai_interactions_table` ajoute `archived_at` et
+`archived_from`, et renomme l'état `applied` en `accepted`. `AiRunner` écrit
+ces colonnes à chaque appel, **même synchrone** : sans ces migrations, tout
+appel échoue. La config passe de
 `pricing` à `providers` (l'ancienne clé reste lue en repli) : republier ou
 reporter le catalogue dans `config/filament-prism.php`.
 

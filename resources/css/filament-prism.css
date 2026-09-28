@@ -141,6 +141,45 @@
     background-color: rgb(255 255 255 / 0.05);
 }
 
+/*
+ * Dans un contenant qui a déjà son cadre (modale, slide-over, volet), des cartes
+ * bordées feraient un cadre dans le cadre : les demandes y deviennent des lignes
+ * séparées d'un filet. Le volet de filament-ui n'a pas de marges intérieures —
+ * son contenu touche le cadre, sous la barre de titre — : les lignes y portent
+ * les leurs (`pane`) ; une modale a déjà les siennes (`rows`).
+ */
+.fp-interactions:where([data-layout='rows'], [data-layout='pane']) {
+    gap: 0;
+}
+
+.fp-interactions:where([data-layout='rows'], [data-layout='pane']) > .fp-interaction {
+    padding-inline: 0;
+    padding-block: 1rem;
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
+}
+
+.fp-interactions:where([data-layout='rows'], [data-layout='pane']) > .fp-interaction + .fp-interaction {
+    border-top: 1px solid var(--gray-200);
+}
+
+:where(.dark) .fp-interactions:where([data-layout='rows'], [data-layout='pane']) > .fp-interaction + .fp-interaction {
+    border-top-color: rgb(255 255 255 / 0.1);
+}
+
+.fp-interactions[data-layout='rows'] > .fp-interaction:first-child {
+    padding-top: 0;
+}
+
+.fp-interactions[data-layout='pane'] > :where(.fp-interaction, .fp-muted) {
+    padding-inline: 1rem;
+}
+
+.fp-interactions[data-layout='pane'] > .fp-muted {
+    padding-block: 1rem;
+}
+
 .fp-interaction-header {
     display: flex;
     flex-wrap: wrap;
@@ -210,6 +249,25 @@
     gap: 0.5rem;
     font-size: 0.875rem;
     color: var(--gray-500);
+}
+
+.fp-interaction-feedback {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    background-color: var(--gray-50);
+}
+
+:where(.dark) .fp-interaction-feedback {
+    background-color: rgb(255 255 255 / 0.05);
+}
+
+.fp-interaction-actions {
+    align-items: center;
 }
 
 .fp-interaction-error {
@@ -284,4 +342,104 @@
 .fp-image-result-grid-sources .fp-image-result-item img {
     aspect-ratio: 1;
     object-fit: cover;
+}
+
+/* Le brouillon d'une correction : les textes qui partiront (voir partials/correction-draft). */
+.fp-correction-draft {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.fp-correction-draft-subject {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.fp-correction-draft-subject + .fp-correction-draft-subject {
+    padding-top: 1rem;
+    border-top: 1px solid var(--gray-200);
+}
+
+:where(.dark) .fp-correction-draft-subject + .fp-correction-draft-subject {
+    border-top-color: rgb(255 255 255 / 0.1);
+}
+
+.fp-correction-draft-key {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--gray-500);
+}
+
+.fp-correction-draft-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.fp-correction-draft-text {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    white-space: pre-line;
+    color: var(--gray-700);
+}
+
+:where(.dark) .fp-correction-draft-text {
+    color: var(--gray-300);
+}
+
+/* Le pied d'une revue de correction (voir partials/correction-footer). */
+.fp-review-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--gray-200);
+}
+
+:where(.dark) .fp-review-footer {
+    border-top-color: rgb(255 255 255 / 0.1);
+}
+
+.fp-review-footer-start {
+    margin-inline-end: auto;
+    font-size: 0.875rem;
+    align-self: center;
+}
+
+.fp-review-refine {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-self: flex-start;
+}
+
+.fp-review-refine-form,
+.fp-review-refine-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.fp-review-refine-form {
+    flex-direction: column;
+}
+
+.fp-review-refine-input {
+    width: min(24rem, 100%);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--gray-300);
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    background-color: #fff;
+}
+
+:where(.dark) .fp-review-refine-input {
+    border-color: rgb(255 255 255 / 0.1);
+    background-color: rgb(255 255 255 / 0.05);
+    color: #fff;
 }

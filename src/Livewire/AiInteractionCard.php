@@ -9,6 +9,7 @@ use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Resources\AiResource;
 use CharlesStOlive\FilamentPrism\Services\AiRunner;
 use CharlesStOlive\FilamentPrism\Support\AiAccess;
+use CharlesStOlive\FilamentPrism\Support\AiProviderException;
 use CharlesStOlive\FilamentPrism\Support\AiResultSchema;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
@@ -27,9 +28,16 @@ use Livewire\Component;
 /**
  * Une demande IA : de qui (pour qui voit tout), où elle en est, ses réglages
  * et son résultat (des composants Filament que la ressource déclare, voir
- * `AiResultSchema`), et ce qu'on peut en faire — « Accepter »
- * (`AiResource::applyResult()`), « Ignorer », « Refaire » (d'autres réglages,
- * même fil), « Relancer » (après un échec).
+ * `AiResultSchema`), et ce qu'on peut en faire selon son état (voir
+ * `AiInteractionStatus`) — une action par transition :
+ *
+ * - brouillon : « Soumettre », « Modifier », « Supprimer le brouillon » ;
+ * - à vérifier : « Accepter » (`AiResource::accept()`, qui peut aussi
+ *   appliquer le résultat), « Affiner », « Ignorer » ;
+ * - acceptée ou ignorée : « Affiner », « Archiver » ; échec : « Relancer » ;
+ * - archivée : « Désarchiver ».
+ *
+ * L'étape naturelle est un bouton (`primaryActions()`), le reste un menu.
  *
  * Posée par `AiInteractionList`, une par demande. Elle se redessine seule
  * toutes les 5 s tant que la demande est en file ou en cours — le provider ne
@@ -84,26 +92,121 @@ class AiInteractionCard extends Component implements HasActions, HasSchemas
             ->components($interaction?->hasResult() ? AiResultSchema::result($interaction) : []);
     }
 
-    public function applyResultAction(): Action
+    public function submitAction(): Action
     {
-        return Action::make('applyResult')
-            ->label(fn (): string => $this->resource()?->applyResultLabel() ?? 'Accepter')
-            ->icon('heroicon-m-check')
+        return Action::make('submit')
+            ->label('Soumettre')
+            ->icon('heroicon-m-paper-airplane')
             ->size(Size::Small)
-            ->visible(fn (): bool => $this->interaction()?->status === AiInteraction::STATUS_PENDING
-                && $this->resource()?->applyResultLabel() !== null)
-            ->action(function (): void {
-                $interaction = $this->interaction();
-                $resource = $this->resource();
+            ->visible(fn (): bool => $this->interaction()?->isDraft() ?? false)
+            ->action(fn () => $this->send(fn (AiRunner $runner, AiInteraction $interaction) => $runner->submit($interaction)));
+    }
 
-                if ($interaction?->status !== AiInteraction::STATUS_PENDING || $resource === null) {
+    /** Changer les réglages d'un brouillon, avant de l'envoyer. */
+    public function editDraftAction(): Action
+    {
+        return Action::make('editDraft')
+            ->label('Modifier')
+            ->icon('heroicon-m-pencil-square')
+            ->color('gray')
+            ->size(Size::Small)
+            ->modalHeading(fn (): string => 'Modifier : '.($this->resource()?->label() ?? ''))
+            ->modalWidth(Width::ThreeExtraLarge)
+            ->visible(fn (): bool => ($this->interaction()?->isDraft() ?? false) && $this->resource()?->inputSchema() !== null)
+            ->fillForm(fn (): array => $this->interaction()?->input ?? [])
+            ->schema(fn (): array => $this->resource()?->inputSchema() ?? [])
+            ->action(function (array $data): void {
+                $interaction = $this->interaction();
+
+                if (! $interaction?->isDraft()) {
                     return;
                 }
 
-                $message = $resource->applyResult($interaction);
+                unset($data['preview']);
+                $interaction->forceFill(['input' => array_replace($interaction->input ?? [], $data)])->save();
+                $this->changed();
+            });
+    }
+
+    /** Rien n'a été payé : un brouillon abandonné s'efface pour de bon. */
+    public function deleteDraftAction(): Action
+    {
+        return Action::make('deleteDraft')
+            ->label('Supprimer le brouillon')
+            ->icon('heroicon-m-trash')
+            ->color('danger')
+            ->size(Size::Small)
+            ->requiresConfirmation()
+            ->visible(fn (): bool => $this->interaction()?->isDraft() ?? false)
+            ->action(function (): void {
+                if ($this->interaction()?->isDraft()) {
+                    $this->interaction()->delete();
+                }
+
+                $this->changed();
+            });
+    }
+
+    /**
+     * Toute demande à vérifier s'accepte ; une ressource qui sait appliquer son résultat le fait en
+     * même temps (`AiResource::accept()`), et le bouton porte son libellé.
+     */
+    public function acceptAction(): Action
+    {
+        return Action::make('accept')
+            ->label(fn (): string => $this->resource()?->acceptLabel() ?? 'Accepter')
+            ->icon('heroicon-m-check')
+            ->size(Size::Small)
+            ->modalWidth(Width::ThreeExtraLarge)
+            ->visible(function (): bool {
+                $interaction = $this->interaction();
+
+                return ($interaction?->isStatus(AiInteraction::STATUS_PENDING) ?? false)
+                    && ($this->resource()?->canAccept($interaction) ?? false);
+            })
+            ->schema(fn (): ?array => ($interaction = $this->interaction()) === null ? null : $this->resource()?->acceptSchema($interaction))
+            ->action(function (array $data): void {
+                $interaction = $this->interaction();
+
+                if (! $interaction?->isStatus(AiInteraction::STATUS_PENDING) || ($resource = $this->resource()) === null) {
+                    return;
+                }
+
+                $message = $resource->accept($interaction, $data);
 
                 Notification::make()->success()->title($message ?? 'Résultat accepté')->send();
                 $this->changed();
+            });
+    }
+
+    /**
+     * Une nouvelle version, dans le même fil : d'autres réglages et/ou ce qui ne va pas. Ce que le
+     * formulaire ne montre pas (ex. les photos choisies) reste celui d'origine.
+     */
+    public function refineAction(): Action
+    {
+        return Action::make('refine')
+            ->label('Affiner')
+            ->icon('heroicon-m-adjustments-horizontal')
+            ->color('gray')
+            ->size(Size::Small)
+            ->modalHeading(fn (): string => 'Affiner : '.($this->resource()?->label() ?? ''))
+            ->modalDescription('Une nouvelle version part à l’IA, avec sa réponse précédente et ce qui ne va pas.')
+            ->modalWidth(Width::ThreeExtraLarge)
+            ->modalSubmitActionLabel('Soumettre')
+            ->visible(function (): bool {
+                $interaction = $this->interaction();
+
+                return ($interaction?->isStatus(AiInteraction::STATUS_PENDING, AiInteraction::STATUS_ACCEPTED, AiInteraction::STATUS_DISCARDED) ?? false)
+                    && ($this->resource()?->canRefine($interaction) ?? false);
+            })
+            ->fillForm(fn (): array => $this->interaction()?->input ?? [])
+            ->schema(fn (): array => ($interaction = $this->interaction()) === null ? [] : ($this->resource()?->refineSchema($interaction) ?? []))
+            ->action(function (array $data): void {
+                $feedback = $data['feedback'] ?? null;
+                unset($data['feedback'], $data['preview']);
+
+                $this->send(fn (AiRunner $runner, AiInteraction $interaction) => $runner->refine($interaction, $feedback, $data));
             });
     }
 
@@ -114,42 +217,68 @@ class AiInteractionCard extends Component implements HasActions, HasSchemas
             ->icon('heroicon-m-x-mark')
             ->color('gray')
             ->size(Size::Small)
-            ->visible(fn (): bool => $this->interaction()?->status === AiInteraction::STATUS_PENDING)
+            ->visible(fn (): bool => $this->interaction()?->isStatus(AiInteraction::STATUS_PENDING) ?? false)
             ->action(function (): void {
                 $this->interaction()?->markDiscarded();
                 $this->changed();
             });
     }
 
-    /**
-     * Refaire la demande avec d'autres réglages : le formulaire de la ressource, rempli avec ceux
-     * d'origine. Ce que le formulaire ne montre pas (ex. les photos choisies) reste celui d'origine.
-     */
-    public function rerunAction(): Action
-    {
-        return Action::make('rerun')
-            ->label('Refaire')
-            ->icon('heroicon-m-arrow-path')
-            ->color('gray')
-            ->size(Size::Small)
-            ->modalHeading(fn (): string => 'Refaire : '.($this->resource()?->label() ?? ''))
-            ->modalWidth(Width::ThreeExtraLarge)
-            ->modalSubmitActionLabel('Envoyer la demande')
-            ->visible(fn (): bool => ($this->interaction()?->hasResult() ?? false) && ($this->resource()?->queued() ?? false))
-            ->fillForm(fn (): array => $this->interaction()?->input ?? [])
-            ->schema(fn (): array => $this->resource()?->inputSchema() ?? [])
-            ->action(fn (array $data) => $this->rerun($data));
-    }
-
+    /** Après un échec : la même demande, telle quelle, en nouvelle version du fil. */
     public function retryAction(): Action
     {
         return Action::make('retry')
             ->label('Relancer')
             ->icon('heroicon-m-arrow-path')
+            ->size(Size::Small)
+            ->visible(fn (): bool => $this->interaction()?->isStatus(AiInteraction::STATUS_FAILED) ?? false)
+            ->action(fn () => $this->send(fn (AiRunner $runner, AiInteraction $interaction) => $runner->refine($interaction)));
+    }
+
+    /** Une demande terminée quitte la liste de son modèle ; elle reste dans les listes globales. */
+    public function archiveAction(): Action
+    {
+        return Action::make('archive')
+            ->label('Archiver')
+            ->icon('heroicon-m-archive-box-arrow-down')
             ->color('gray')
             ->size(Size::Small)
-            ->visible(fn (): bool => $this->interaction()?->status === AiInteraction::STATUS_FAILED && ($this->resource()?->queued() ?? false))
-            ->action(fn () => $this->rerun());
+            ->visible(fn (): bool => $this->interaction()?->canBeArchived() ?? false)
+            ->action(function (): void {
+                $this->interaction()?->archive();
+
+                Notification::make()->success()->title('Demande archivée')->body('Elle reste dans « Demandes IA ».')->send();
+                $this->changed();
+            });
+    }
+
+    public function unarchiveAction(): Action
+    {
+        return Action::make('unarchive')
+            ->label('Désarchiver')
+            ->icon('heroicon-m-archive-box-x-mark')
+            ->size(Size::Small)
+            ->visible(fn (): bool => $this->interaction()?->isArchived() ?? false)
+            ->action(function (): void {
+                $this->interaction()?->unarchive();
+                $this->changed();
+            });
+    }
+
+    /**
+     * Les actions visibles de la demande, dans l'ordre du cycle : l'étape naturelle (soumettre,
+     * accepter, relancer, désarchiver) en bouton, le reste dans un menu.
+     *
+     * @return array{primary: array<int, Action>, others: array<int, Action>}
+     */
+    public function footerActions(): array
+    {
+        $visible = fn (array $actions): array => array_values(array_filter($actions, fn (Action $action): bool => $action->isVisible()));
+
+        return [
+            'primary' => $visible([$this->submitAction, $this->acceptAction, $this->retryAction, $this->unarchiveAction]),
+            'others' => $visible([$this->editDraftAction, $this->refineAction, $this->discardAction, $this->archiveAction, $this->deleteDraftAction]),
+        ];
     }
 
     public function threadUrl(): ?string
@@ -172,8 +301,13 @@ class AiInteractionCard extends Component implements HasActions, HasSchemas
         ]);
     }
 
-    /** @param  array<string, mixed>  $data */
-    private function rerun(array $data = []): void
+    /**
+     * Envoie à l'IA (soumettre, affiner, relancer) : tout de suite pour une ressource synchrone —
+     * l'appel peut échouer, son message est montré —, en file sinon.
+     *
+     * @param  \Closure(AiRunner, AiInteraction): AiInteraction  $send
+     */
+    private function send(\Closure $send): void
     {
         $interaction = $this->interaction();
 
@@ -181,9 +315,19 @@ class AiInteractionCard extends Component implements HasActions, HasSchemas
             return;
         }
 
-        app(AiRunner::class)->rerun($interaction, $data);
+        try {
+            $sent = $send(app(AiRunner::class), $interaction);
+        } catch (AiProviderException $exception) {
+            Notification::make()->danger()->title('Appel à l’IA impossible')->body($exception->getMessage())->send();
+            $this->changed();
 
-        Notification::make()->success()->title('Demande envoyée')->body('Vous serez prévenu quand elle sera prête.')->send();
+            return;
+        }
+
+        $sent->isActive()
+            ? Notification::make()->success()->title('Demande envoyée')->body('Vous serez prévenu quand elle sera prête.')->send()
+            : Notification::make()->success()->title('Réponse reçue')->send();
+
         $this->changed();
     }
 

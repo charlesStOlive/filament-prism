@@ -33,15 +33,46 @@ class CorrectionService
      */
     public function correct(CorrectionSubject $subject, string $taskKey = 'orthography', ?Model $trackable = null): AiInteraction
     {
-        return $this->runner->run(
+        return $this->runner->submit($this->prepare($subject, $taskKey, $trackable));
+    }
+
+    /**
+     * La correction de `$subject`, sans rien envoyer : la réponse `pending` déjà payée pour ce même
+     * texte s'il y en a une, sinon le brouillon — avec le texte d'aujourd'hui — qu'on soumettra
+     * (`submit()`). C'est ce que montre la revue en s'ouvrant.
+     */
+    public function prepare(CorrectionSubject $subject, string $taskKey = 'orthography', ?Model $trackable = null): AiInteraction
+    {
+        return $this->runner->prepare(
             $this->tasks->resource($taskKey),
             input: $subject->extractValues(),
-            context: ['fields' => $subject->fields()],
             attachTo: $subject->model(),
             subjectKey: $subject->key(),
             trackable: $trackable,
-            meta: ['labels' => CorrectableField::labelsByName($subject->fields())],
+            meta: $this->meta($subject->fields(), grouped: false),
         );
+    }
+
+    /**
+     * Envoie un brouillon de correction à l'IA ; ses champs sont relus dans la demande (voir
+     * `OrthographyTask::interactionContext()`).
+     *
+     * @throws AiProviderException
+     */
+    public function submit(AiInteraction $interaction): AiInteraction
+    {
+        return $this->runner->submit($interaction);
+    }
+
+    /**
+     * Une nouvelle version de la correction, avec ce qui ne va pas (« garde le tutoiement »),
+     * envoyée tout de suite.
+     *
+     * @throws AiProviderException
+     */
+    public function refine(AiInteraction $interaction, ?string $feedback): AiInteraction
+    {
+        return $this->runner->refine($interaction, $feedback);
     }
 
     /**
@@ -59,6 +90,12 @@ class CorrectionService
      */
     public function correctGroup(CorrectionSubjectGroup $group, string $taskKey = 'orthography', ?Model $trackable = null): AiInteraction
     {
+        return $this->runner->submit($this->prepareGroup($group, $taskKey, $trackable));
+    }
+
+    /** Le pendant de `prepare()` pour un groupe de sujets. */
+    public function prepareGroup(CorrectionSubjectGroup $group, string $taskKey = 'orthography', ?Model $trackable = null): AiInteraction
+    {
         $input = [
             'items' => collect($group->subjects())
                 ->map(fn (CorrectionSubject $subject, string $key): array => ['key' => $key, ...$subject->extractValues()])
@@ -66,15 +103,27 @@ class CorrectionService
                 ->all(),
         ];
 
-        return $this->runner->run(
+        return $this->runner->prepare(
             $this->tasks->resource($taskKey),
             input: $input,
-            context: ['fields' => $group->fields(), 'grouped' => true],
             attachTo: $group->model(),
             subjectKey: $group->key(),
             trackable: $trackable,
-            meta: ['labels' => CorrectableField::labelsByName($group->fields())],
+            meta: $this->meta($group->fields(), grouped: true),
         );
+    }
+
+    /**
+     * @param  array<int, CorrectableField>  $fields
+     * @return array<string, mixed>
+     */
+    private function meta(array $fields, bool $grouped): array
+    {
+        return [
+            'labels' => CorrectableField::labelsByName($fields),
+            'fields' => CorrectableField::toMeta($fields),
+            'grouped' => $grouped,
+        ];
     }
 
     /** @see AiRunner::providerIsConfigured() */
@@ -106,8 +155,11 @@ class CorrectionService
         $interaction->markApplied();
     }
 
+    /** Écarte une correction encore à vérifier ; une correction déjà appliquée ou ignorée reste ce qu'elle est. */
     public function discard(AiInteraction $interaction): void
     {
-        $interaction->markDiscarded();
+        if ($interaction->isStatus(AiInteraction::STATUS_PENDING)) {
+            $interaction->markDiscarded();
+        }
     }
 }
