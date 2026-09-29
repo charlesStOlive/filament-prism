@@ -21,6 +21,7 @@ use Filament\Pages\Page;
 use Filament\Schemas\Components\EmbeddedSchema;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Schema;
+use Illuminate\Support\Facades\Gate;
 use UnitEnum;
 
 /**
@@ -42,6 +43,18 @@ class AiUsageStats extends Page
     protected static ?string $title = 'Consommation IA';
 
     protected static ?string $slug = 'ai-usage';
+
+    /**
+     * Réservée à qui en a le droit quand l'application gère les permissions : elle définit alors une
+     * ability Gate au nom de cette classe (filament-permission-manager : `pages.aiusagestats.viewany`,
+     * créée par permissions:sync). Sans cette ability, la page reste ouverte à tout le panel.
+     */
+    public static bool $requiresPermission = true;
+
+    public static function canAccess(): bool
+    {
+        return ! Gate::has(static::class) || Gate::allows(static::class);
+    }
 
     public static function getNavigationGroup(): string|UnitEnum|null
     {

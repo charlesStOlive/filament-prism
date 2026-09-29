@@ -510,6 +510,11 @@ montre que le formulaire d'entrée et se ferme à l'envoi
   la facture en euros, durée moyenne ; les demandes dans le temps (voir
   « Coûts en euros » plus bas).
 
+  La page est réservée quand l'application gère les permissions : elle déclare `$requiresPermission` et
+  demande au Gate une ability au nom de sa classe. Avec charlesstolive/filament-permission-manager, il faut
+  `pages.aiusagestats.viewany` (créée par `permissions:sync`). Sans cette ability, elle reste ouverte à tout
+  le panel.
+
 ### Qui voit quoi (`AiAccess`)
 
 Chacun ne voit que **ses** demandes et **sa** consommation — listes, fil d'une
@@ -527,19 +532,11 @@ charlesstolive/filament-permission-manager (`$specificPermissions`, lu par
 sert la vérifie ainsi :
 
 ```php
-->seeAllRequestsUsing(function (User $user): bool {
-    try {
-        return PermissionService::userCan($user, AiInteractionResource::SEE_ALL_PERMISSION);
-    } catch (PermissionDoesNotExist) {
-        return false; // pas encore créée par permissions:sync
-    }
-})
+->seeAllRequestsUsing(fn (User $user): bool => PermissionService::userCan($user, AiInteractionResource::SEE_ALL_PERMISSION))
 ```
 
-> **Piège : `PermissionService::userCan()` lève une exception pour une
-> permission absente de la base**, au lieu de répondre non. Sans le `try`,
-> toute page qui montre une demande IA plante tant que `permissions:sync` n'a
-> pas tourné.
+> Avant filament-permission-manager `7cde089`, `PermissionService::userCan()` levait une exception pour une
+> permission absente de la base : il fallait l'entourer d'un `try { … } catch (PermissionDoesNotExist) { return false; }`.
 
 ### Afficher les demandes : modale, slide-over, volet
 
