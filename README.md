@@ -550,6 +550,10 @@ charlesstolive/filament-permission-manager (`$specificPermissions`, lu par
 `permissions:sync`) sans dépendre de ce package ; une application qui s'en
 sert la vérifie ainsi :
 
+Avec filament-permission-manager, il n'y a plus rien à brancher : il définit l'ability
+`{AiInteractionResource}.viewallusers` pour cette permission, et `AiAccess` la consulte. Une application peut toujours
+décider elle-même dans le panel :
+
 ```php
 ->seeAllRequestsUsing(fn (User $user): bool => PermissionService::userCan($user, AiInteractionResource::SEE_ALL_PERMISSION))
 ```

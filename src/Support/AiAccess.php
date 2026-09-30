@@ -3,6 +3,7 @@
 namespace CharlesStOlive\FilamentPrism\Support;
 
 use Closure;
+use CharlesStOlive\FilamentPrism\Filament\Resources\AiInteractions\AiInteractionResource;
 use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
@@ -15,8 +16,10 @@ use Throwable;
  * demande, stats de consommation —, sauf :
  *
  * - qui peut **tout voir** (un super utilisateur) : les demandes de tout le monde, avec leur auteur, et ce que les
- *   fournisseurs ont facturé. Se décide dans le panel (`FilamentPrismPlugin::seeAllRequestsUsing()`), ou, sans lui,
- *   par l'ability `filament-prism.see-all-requests` (Gate) — refusée tant que l'application ne la définit pas ;
+ *   fournisseurs ont facturé. Se décide dans le panel (`FilamentPrismPlugin::seeAllRequestsUsing()`), sinon par l'ability
+ *   `{AiInteractionResource}.viewallusers` (définie par filament-permission-manager pour la permission
+ *   `aiinteraction.viewallusers`), sinon par l'ability `filament-prism.see-all-requests` — refusée tant que
+ *   l'application ne définit ni l'une ni l'autre ;
  * - qui voit **un groupe** : ses demandes et celles de certains utilisateurs, avec leur auteur, mais pas la facture.
  *   L'application dit qui, avec `AiAccess::visibleUsersUsing()` (prism ne sait pas ce qu'est un groupe : un rôle,
  *   un service…).
@@ -83,6 +86,14 @@ final class AiAccess
             if ($decision !== null) {
                 return $decision;
             }
+        }
+
+        // L'action propre déclarée par AiInteractionResource (`$specificPermissions`) : filament-permission-manager
+        // définit l'ability `{Resource}.viewallusers` (permission `aiinteraction.viewallusers`), sans dépendance ici.
+        $ability = AiInteractionResource::class.'.viewallusers';
+
+        if (Gate::has($ability)) {
+            return Gate::forUser($user)->allows($ability);
         }
 
         return Gate::forUser($user)->allows(self::SEE_ALL_ABILITY);
