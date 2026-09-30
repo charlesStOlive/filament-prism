@@ -267,7 +267,7 @@ class AiRunner
             'task' => $resource->key(),
             'provider' => $resource->provider(),
             'model' => $resource->model(),
-            'correctable_type' => $attachTo ? $attachTo::class : null,
+            'correctable_type' => $attachTo?->getMorphClass(),
             'correctable_id' => $attachTo?->getKey(),
             'subject_key' => $subjectKey,
             'trackable_type' => $trackable?->getMorphClass(),
@@ -317,7 +317,7 @@ class AiRunner
 
         return AiInteraction::query()
             ->when($attachTo !== null, fn (Builder $query) => $query
-                ->where('correctable_type', $attachTo::class)
+                ->where('correctable_type', $attachTo->getMorphClass())
                 ->where('correctable_id', $attachTo->getKey()))
             ->when(
                 $subjectKey === null,
@@ -491,7 +491,7 @@ class AiRunner
 
         $pending = AiInteraction::query()
             ->when($attachTo !== null, fn (Builder $query) => $query
-                ->where('correctable_type', $attachTo::class)
+                ->where('correctable_type', $attachTo->getMorphClass())
                 ->where('correctable_id', $attachTo->getKey()))
             ->when(
                 $subjectKey === null,
