@@ -11,8 +11,9 @@ use Filament\Widgets\Concerns\InteractsWithPageFilters;
 use Filament\Widgets\TableWidget;
 
 /**
- * Les tokens et le coût de chacun sur la période choisie (voir `AiUsage::byUser()`) — pour qui
- * peut tout voir seulement : les autres n'ont que leurs propres chiffres.
+ * Les tokens et le coût de chacun sur la période choisie (voir `AiUsage::byUser()`) — pour qui voit
+ * les demandes d'autres personnes (tout le monde, ou un groupe : voir `AiAccess`) ; les autres n'ont
+ * que leurs propres chiffres. La part de la facture reste à qui peut tout voir.
  */
 class AiUsageByUser extends TableWidget
 {
@@ -22,7 +23,7 @@ class AiUsageByUser extends TableWidget
 
     public static function canView(): bool
     {
-        return AiAccess::canSeeAll();
+        return AiAccess::canSeeOthers();
     }
 
     public function table(Table $table): Table
@@ -46,6 +47,7 @@ class AiUsageByUser extends TableWidget
                     ->placeholder('—'),
                 TextColumn::make('billed_eur')
                     ->label('Part de la facture')
+                    ->visible(fn (): bool => AiAccess::canSeeAll())
                     ->tooltip('L’estimation recalée sur ce que le fournisseur a réellement facturé sur la période.')
                     ->formatStateUsing(fn (?float $state): ?string => $euros($state))
                     ->placeholder('—'),

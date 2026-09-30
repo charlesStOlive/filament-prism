@@ -297,7 +297,7 @@ class AiInteractionCard extends Component implements HasActions, HasSchemas
         return view('filament-prism::livewire.ai-interaction-card', [
             'interaction' => $this->interaction(),
             'resource' => $this->resource(),
-            'showsAuthor' => AiAccess::canSeeAll(),
+            'showsAuthor' => AiAccess::canSeeOthers(),
         ]);
     }
 

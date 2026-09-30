@@ -523,6 +523,25 @@ voir voit celles de tout le monde, **avec leur auteur** (sur chaque carte, en
 colonne et en filtre de « Demandes IA »), et la consommation **par
 utilisateur** (`AiUsageByUser`).
 
+Entre les deux, **un groupe** : l'application peut ouvrir à quelqu'un les demandes de certains utilisateurs, en
+plus des siennes (avec leur auteur, le détail par utilisateur et le filtre par personne limité à ces utilisateurs,
+mais pas la facture des fournisseurs, qui reste à « tout voir »). Prism ne sait pas ce qu'est un groupe : l'application
+le dit au démarrage (`AppServiceProvider::boot()`), avec ou sans le plugin dans le panel :
+
+```php
+AiAccess::visibleUsersUsing(function (User $viewer, Builder $users): ?Builder {
+    // Par exemple : les rôles dont $viewer a la permission `aiinteraction.viewrole.{rôle}`.
+    $roles = RoleScopedPermissions::rolesGranted($viewer, AiInteractionResource::VIEW_ROLE_PERMISSION);
+
+    return $roles->isEmpty() ? null : $users->role($roles);   // null : personne d'autre que lui
+});
+```
+
+`AiInteractionResource` déclare `$roleScopedPermissions = ['viewrole']` : avec charlesstolive/filament-permission-manager,
+chaque rôle a sa permission `aiinteraction.viewrole.{rôle}` (et `aiinteraction.viewrole.*` les couvre toutes). Une
+application qui n'enregistre pas le plugin (donc pas cette Resource) la déclare dans la config de
+filament-permission-manager : `authorization.role_scoped_permissions => ['aiinteraction.viewrole']`.
+
 « Tout voir » se décide dans le panel (`seeAllRequestsUsing()`), sinon par
 l'ability Gate `filament-prism.see-all-requests` (refusée tant que
 l'application ne la définit pas). `AiInteractionResource` déclare aussi la

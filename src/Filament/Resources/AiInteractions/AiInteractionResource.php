@@ -35,12 +35,16 @@ use UnitEnum;
  * listes de leur modèle, restent ici (voir `AiInteractionStatus`).
  *
  * Chacun n'y voit que ses demandes ; qui peut tout voir (voir `AiAccess`) voit
- * celles de tout le monde, avec leur auteur, et peut filtrer par personne.
+ * celles de tout le monde, qui voit un groupe celles de ce groupe, avec leur
+ * auteur, et peut filtrer par personne.
  *
- * `$specificPermissions` déclare la permission `aiinteraction.viewallusers`
- * au format de charlesstolive/filament-permission-manager (`permissions:sync`
- * la crée) — sans en dépendre : une application qui s'en sert la vérifie dans
- * `FilamentPrismPlugin::seeAllRequestsUsing()`.
+ * Deux déclarations au format de charlesstolive/filament-permission-manager
+ * (`permissions:sync` les crée), sans en dépendre :
+ * - `$specificPermissions` : `aiinteraction.viewallusers`, qu'une application
+ *   vérifie dans `FilamentPrismPlugin::seeAllRequestsUsing()` ;
+ * - `$roleScopedPermissions` : `aiinteraction.viewrole.{rôle}`, une par rôle —
+ *   voir les demandes des utilisateurs de ce rôle ; une application s'en sert
+ *   dans `AiAccess::visibleUsersUsing()`.
  */
 class AiInteractionResource extends Resource
 {
@@ -61,6 +65,12 @@ class AiInteractionResource extends Resource
 
     /** @var array<int, string> Lue par filament-permission-manager (`permissions:sync`). */
     protected static array $specificPermissions = ['viewallusers'];
+
+    /** Voir les demandes des utilisateurs d'un rôle : `aiinteraction.viewrole.{rôle}` (voir la docblock de la classe). */
+    public const VIEW_ROLE_PERMISSION = 'aiinteraction.viewrole';
+
+    /** @var array<int, string> Lue par filament-permission-manager : une permission par rôle existant. */
+    protected static array $roleScopedPermissions = ['viewrole'];
 
     public static function getNavigationGroup(): string|UnitEnum|null
     {
@@ -88,7 +98,7 @@ class AiInteractionResource extends Resource
                 TextColumn::make('task')->label('Ressource')->formatStateUsing(fn (string $state): string => static::taskLabels()[$state] ?? $state),
                 // Libellé, couleur et icône viennent de l'état (`AiInteractionStatus`).
                 TextColumn::make('status')->label('Statut')->badge(),
-                TextColumn::make('user.name')->label('Par')->visible(fn (): bool => AiAccess::canSeeAll()),
+                TextColumn::make('user.name')->label('Par')->visible(fn (): bool => AiAccess::canSeeOthers()),
                 TextColumn::make('total_tokens')->label('Tokens')->numeric()->sortable(),
                 TextColumn::make('model')->label('Modèle')->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('cost_eur')
@@ -104,11 +114,11 @@ class AiInteractionResource extends Resource
             ->filters([
                 SelectFilter::make('user_id')
                     ->label('Par')
-                    ->relationship('user', 'name')
+                    ->relationship('user', 'name', fn (Builder $query): Builder => AiAccess::scopeUsers($query))
                     ->searchable()
                     ->preload()
                     ->multiple()
-                    ->visible(fn (): bool => AiAccess::canSeeAll()),
+                    ->visible(fn (): bool => AiAccess::canSeeOthers()),
                 SelectFilter::make('task')->label('Ressource')->options(fn (): array => static::taskLabels())->multiple(),
                 StateFusionSelectFilter::make('status')->label('Statut')->multiple(),
                 Filter::make('created_at')

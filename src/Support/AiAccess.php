@@ -2,6 +2,7 @@
 
 namespace CharlesStOlive\FilamentPrism\Support;
 
+use Closure;
 use CharlesStOlive\FilamentPrism\FilamentPrismPlugin;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
@@ -11,16 +12,56 @@ use Throwable;
 
 /**
  * Qui voit quelles demandes IA : chacun les siennes — listes, fil d'une
- * demande, stats de consommation —, sauf qui peut tout voir (un super
- * utilisateur), qui voit alors aussi de qui est chaque demande.
+ * demande, stats de consommation —, sauf :
  *
- * « Tout voir » se décide dans le panel (`FilamentPrismPlugin::seeAllRequestsUsing()`),
- * ou, sans lui, par l'ability `filament-prism.see-all-requests` (Gate) — refusée
- * tant que l'application ne la définit pas.
+ * - qui peut **tout voir** (un super utilisateur) : les demandes de tout le monde, avec leur auteur, et ce que les
+ *   fournisseurs ont facturé. Se décide dans le panel (`FilamentPrismPlugin::seeAllRequestsUsing()`), ou, sans lui,
+ *   par l'ability `filament-prism.see-all-requests` (Gate) — refusée tant que l'application ne la définit pas ;
+ * - qui voit **un groupe** : ses demandes et celles de certains utilisateurs, avec leur auteur, mais pas la facture.
+ *   L'application dit qui, avec `AiAccess::visibleUsersUsing()` (prism ne sait pas ce qu'est un groupe : un rôle,
+ *   un service…).
  */
 final class AiAccess
 {
     public const SEE_ALL_ABILITY = 'filament-prism.see-all-requests';
+
+    /** @var (Closure(Authenticatable, Builder): ?Builder)|null */
+    private static ?Closure $visibleUsersResolver = null;
+
+    /**
+     * Les autres utilisateurs dont une personne voit les demandes IA, sans tout voir. Le callback reçoit la personne et
+     * une requête sur les utilisateurs, et la restreint à ceux qu'elle voit — ou renvoie `null` : personne d'autre.
+     *
+     *     AiAccess::visibleUsersUsing(fn (User $viewer, Builder $users): ?Builder => $users->role(['editeur']));
+     *
+     * À déclarer au démarrage de l'application (`AppServiceProvider::boot()`) : la règle vaut dans tous les panels,
+     * avec ou sans le plugin. `null` la retire.
+     */
+    public static function visibleUsersUsing(?Closure $resolver): void
+    {
+        self::$visibleUsersResolver = $resolver;
+    }
+
+    /**
+     * Les autres utilisateurs que `$user` voit, en plus de lui-même ; `null` : personne (ou pas de règle). Ne dit rien
+     * de « tout voir » (voir `canSeeAll()`).
+     */
+    public static function visibleUsers(?Authenticatable $user = null): ?Builder
+    {
+        $user ??= Auth::user();
+
+        if ($user === null || self::$visibleUsersResolver === null || ! method_exists($user, 'newQuery')) {
+            return null;
+        }
+
+        return (self::$visibleUsersResolver)($user, $user->newQuery());
+    }
+
+    /** Vrai si `$user` voit les demandes d'autres personnes (tout le monde ou un groupe) : il voit alors leur auteur. */
+    public static function canSeeOthers(?Authenticatable $user = null): bool
+    {
+        return self::canSeeAll($user) || self::visibleUsers($user) !== null;
+    }
 
     public static function canSeeAll(?Authenticatable $user = null): bool
     {
@@ -50,6 +91,30 @@ final class AiAccess
     /** Restreint une requête sur `ai_interactions` à ce que l'utilisateur courant peut voir. */
     public static function scope(Builder $query): Builder
     {
-        return self::canSeeAll() ? $query : $query->where($query->qualifyColumn('user_id'), Auth::id());
+        if (self::canSeeAll()) {
+            return $query;
+        }
+
+        $column = $query->qualifyColumn('user_id');
+        $others = self::visibleUsers();
+
+        return $query->where(fn (Builder $query) => $query
+            ->where($column, Auth::id())
+            ->when($others, fn (Builder $query, Builder $others) => $query->orWhereIn($column, $others->select($others->getModel()->getQualifiedKeyName()))));
+    }
+
+    /** Restreint une requête sur les utilisateurs à ceux dont l'utilisateur courant voit les demandes, lui compris. */
+    public static function scopeUsers(Builder $users): Builder
+    {
+        if (self::canSeeAll()) {
+            return $users;
+        }
+
+        $key = $users->getModel()->getQualifiedKeyName();
+        $others = self::visibleUsers();
+
+        return $users->where(fn (Builder $query) => $query
+            ->where($key, Auth::id())
+            ->when($others, fn (Builder $query, Builder $others) => $query->orWhereIn($key, $others->select($others->getModel()->getQualifiedKeyName()))));
     }
 }

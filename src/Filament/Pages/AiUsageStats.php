@@ -95,9 +95,9 @@ class AiUsageStats extends Page
                 ->selectablePlaceholder(false),
             Select::make('user')
                 ->label('Utilisateur')
-                ->placeholder('Tout le monde')
-                ->visible(fn (): bool => AiAccess::canSeeAll())
-                ->options(fn (): array => AiInteraction::query()
+                ->placeholder(fn (): string => AiAccess::canSeeAll() ? 'Tout le monde' : 'Tous ceux que je vois')
+                ->visible(fn (): bool => AiAccess::canSeeOthers())
+                ->options(fn (): array => AiAccess::scope(AiInteraction::query())
                     ->whereNotNull('user_id')
                     ->with('user')
                     ->get(['user_id'])
