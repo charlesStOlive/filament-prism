@@ -72,6 +72,12 @@ class AiInteractionResource extends Resource
     /** @var array<int, string> Lue par filament-permission-manager : une permission par rôle existant. */
     protected static array $roleScopedPermissions = ['viewrole'];
 
+    /** @var array<string, string> Leurs libellés dans l'écran des rôles (filament-permission-manager). */
+    protected static array $permissionLabels = [
+        'viewallusers' => 'Voir les demandes et la consommation de tout le monde',
+        'viewrole' => 'Voir les demandes et la consommation des utilisateurs du rôle',
+    ];
+
     public static function getNavigationGroup(): string|UnitEnum|null
     {
         return filament()->hasPlugin(FilamentPrismPlugin::ID) ? FilamentPrismPlugin::get()->getNavigationGroup() : null;
