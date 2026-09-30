@@ -86,6 +86,12 @@ trait InteractsWithCorrectionTask
                 try {
                     $interactionId = $arguments[self::INTERACTION_ARGUMENT] ?? null;
 
+                    // Action résolue sans être ouverte (les assertions de test de Filament, par exemple) : pas de
+                    // brouillon à créer ni d'argument où le garder.
+                    if ($interactionId === null && empty($livewire->mountedActions)) {
+                        return [];
+                    }
+
                     if ($interactionId === null) {
                         $interactionId = $startCorrection()->getKey();
                         $livewire->mergeMountedActionArguments([self::INTERACTION_ARGUMENT => $interactionId]);
