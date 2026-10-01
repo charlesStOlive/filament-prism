@@ -26,6 +26,7 @@ et grammaticale** (`orthography`) ; une application déclare les siennes
 - [Demandes en arrière-plan et images (`queued()`, `generatesImages()`)](#demandes-en-arrière-plan-et-images-queued-generatesimages)
 - [« Demandes IA » et « Consommation IA » (`FilamentPrismPlugin`)](#demandes-ia-et-consommation-ia-filamentprismplugin)
   - [Qui voit quoi (`AiAccess`)](#qui-voit-quoi-aiaccess)
+  - [Qui lance une correction (`AiPermissions`)](#qui-lance-une-correction-aipermissions)
   - [Afficher les demandes : modale, slide-over, volet](#afficher-les-demandes--modale-slide-over-volet)
   - [L'affichage d'une demande : piloté par la ressource](#laffichage-dune-demande--piloté-par-la-ressource)
 - [Coûts en euros et facture réelle des fournisseurs](#coûts-en-euros-et-facture-réelle-des-fournisseurs)
@@ -560,6 +561,23 @@ décider elle-même dans le panel :
 
 > Avant filament-permission-manager `7cde089`, `PermissionService::userCan()` levait une exception pour une
 > permission absente de la base : il fallait l'entourer d'un `try { … } catch (PermissionDoesNotExist) { return false; }`.
+
+### Qui lance une correction (`AiPermissions`)
+
+`CorrectionAction` et `GroupCorrectionAction` consultent l'ability Gate `{Resource de la page}.ai.{tâche}` quand
+l'application la définit (`->authorize()` : le bouton disparaît sans elle) ; sinon, elles restent ouvertes à qui voit
+la page. Avec filament-permission-manager, la Resource déclare la permission `{liste}.ai.{tâche}` dans une famille :
+
+```php
+protected static array $permissionFamilies = ['ai' => 'Intelligence artificielle'];
+
+public static function permissionActions(): array
+{
+    return AiPermissions::actions(['orthography']); // ['ai.orthography' => 'Correction orthographique']
+}
+```
+
+L'écran des rôles montre alors la famille (une case par tâche, et « Toute la famille » pour les tâches à venir).
 
 ### Afficher les demandes : modale, slide-over, volet
 

@@ -18,10 +18,26 @@ class AiTaskRegistry
     /** @var Collection<string, AiTask>|null */
     private ?Collection $tasks = null;
 
-    /** @return Collection<string, AiTask> */
+    /** @var array<int, class-string<AiTask>> Les classes d'où viennent `$tasks`. */
+    private array $classes = [];
+
+    /**
+     * Relu si la configuration a changé depuis : les droits des tâches sont déclarés au démarrage (voir
+     * `AiPermissions`), avant qu'une application ou un test n'ajoute les siennes.
+     *
+     * @return Collection<string, AiTask>
+     */
     public function all(): Collection
     {
-        return $this->tasks ??= collect(config('filament-prism.tasks', []))
+        $classes = (array) config('filament-prism.tasks', []);
+
+        if ($this->tasks !== null && $classes === $this->classes) {
+            return $this->tasks;
+        }
+
+        $this->classes = $classes;
+
+        return $this->tasks = collect($classes)
             ->map(fn (string $class): AiTask => app($class))
             ->keyBy(fn (AiTask $task): string => $task->key());
     }

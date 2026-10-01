@@ -5,6 +5,7 @@ namespace CharlesStOlive\FilamentPrism\Filament\Actions\Concerns;
 use CharlesStOlive\FilamentPrism\Models\AiInteraction;
 use CharlesStOlive\FilamentPrism\Registry\AiTaskRegistry;
 use CharlesStOlive\FilamentPrism\Services\CorrectionService;
+use CharlesStOlive\FilamentPrism\Support\AiPermissions;
 use CharlesStOlive\FilamentPrism\Support\AiProviderException;
 use Closure;
 use Filament\Actions\Contracts\HasActions;
@@ -80,6 +81,8 @@ trait InteractsWithCorrectionTask
             ->modalWidth(Width::ThreeExtraLarge)
             ->modalSubmitAction(false)
             ->modalCancelActionLabel('Fermer')
+            // Réservée à qui a le droit de lancer la tâche sur cette liste, quand l'application le gère (voir AiPermissions).
+            ->authorize(fn (HasActions $livewire): bool => AiPermissions::allows($livewire, $this->getTaskKey()))
             ->disabled(fn (): bool => ! $this->isProviderConfigured())
             ->tooltip(fn (): ?string => $this->isProviderConfigured() ? null : 'Clé API manquante pour ce provider — voir le fichier .env.')
             ->schema(function (array $arguments, HasActions $livewire) use ($startCorrection, $makeReview): array {
